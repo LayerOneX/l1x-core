@@ -1,0 +1,13 @@
+{
+  "smart_contract_deployment": [
+    "PUBLIC",
+    "EVM",
+    {
+      "file": "../solidity/creationCode20.txt"
+    },
+    0,
+    {
+      "text": "000000000000000000000000000001"
+    }
+  ]
+}

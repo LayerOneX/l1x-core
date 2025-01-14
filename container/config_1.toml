@@ -1,0 +1,108 @@
+dev_mode = true
+multinode_mode = true
+replication_enable = false # make true for production
+max_size = 100
+fee_limit = 10000000
+rate_limit = 15
+time_frame_seconds = 100
+expiration_seconds = 100
+block_time = 3000
+# eth_chain_id = 1066 # l1xvm in roman numerals (l1x = 61, already taken by ethereum classic)
+# eth_chain_id = 1067 # testnet chain_id
+eth_chain_id = 1068 # devnet chain_id
+epoch_duration = 2400 # This is just an example(In blocks)
+probation_period_epochs = 0 # This is just an example(In blocks) change for mainnet
+anomaly_threshold = 0.5
+severe_anomaly_threshold = 0.5
+epoch_transition_block = 0
+
+# Enable/Disable estimate_fee RPC
+rpc_disable_estimate_fee = false
+
+# Node 1
+node_port = "5010"
+node_ip_address = "/ip4/0.0.0.0/tcp/5010"
+ node_private_key = "6913aeae91daf21a8381b1af75272fe6fae8ec4a21110674815c8f0691e32758"
+ node_verifying_key = "02976d7877db9e40669feb13630396dade7e045cd268dd53e686647ff77a7e42a4"
+ node_address = "78e044394595d4984f66c1b19059bc14ecc24063"
+node_metadata = "metadata"
+cluster_address = "0101010101010101010101010101010101010101"
+boot_nodes = [
+
+]
+ archive_nodes = [] # base url of s3 bucket, which will be used to download the database dump eg: https://archive-snapshots.l1x.foundation/
+ archive_public_key = "" # public key of archive node, required for signature verification at the time of apply-snapshot
+ sync_node_time_interval = 120 # interval in seconds. Archive node uses this to sync with boot node
+ snapshot_time_interval = 28800 # interval in seconds. Archive node uses this to create snapshot
+ disable_snapshot = false
+# sync_node_address = "http://172.27.0.4:50052"
+grpc_port = "0.0.0.0:50052"
+jsonrpc_port = "0.0.0.0:50051"
+validator_pool_address = "522b3294fe78d57a1d7e1c37393f11841f6a9494"
+
+[db.Postgres]
+host = "postgres11:5432"
+username = "postgres"
+password = "postgres"
+pool_size = 10
+db_name = "l1x"
+test_db_name = "l1x_test" # optional
+
+[initial_epoch]
+block_proposer = "78e044394595d4984f66c1b19059bc14ecc24063"
+
+[sync]
+# Default value is 50
+batch_size = 500
+
+[autonat]
+# Timeout for requests.
+# Default: 30 secs
+timeout = 5
+
+# Client Config
+# Delay on init before starting the fist probe.
+# Default: 30 secs
+boot_delay = 5
+
+# Interval in which the NAT should be tested again if max confidence was reached in a status.
+# Default 15 mins (900 secs)
+# refresh_interval = 900
+
+# Interval in which the NAT status should be re-tried if it is currently unknown
+# or max confidence was not reached yet.
+# Default: 90 secs
+retry_interval = 3
+
+# Throttle period for re-using a peer as server for a dial-request.
+# Default: 90 secs
+throttle_server_period = 0
+
+# Max confidence that can be reached in a public / private NAT status.
+# Note = for [`NatStatus::Unknown`] the confidence is always 0.
+# Default: 3
+confidence_max = 1
+
+# Server Config
+# Max addresses that are tried per peer.
+# Deafult: 16
+# max_peer_addresses = 16
+
+# Max total dial requests done in `[Config::throttle_clients_period`].
+# Default: 30
+# throttle_clients_global_max = 30
+
+# Max dial requests done in `[Config::throttle_clients_period`] for a peer.
+# Default: 3
+# throttle_clients_peer_max = 3
+
+# Period for throttling clients requests.
+# Deafult: 1
+# throttle_clients_period = 1
+
+# As a server reject probes for clients that are observed at a non-global ip address.
+# Correspondingly as a client only pick peers as server that are not observed at a
+# private ip address. Note that this does not apply for servers that are added via
+# [`Behaviour::add_server`].
+# Default: true
+only_global_ips = false

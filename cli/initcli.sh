@@ -1,0 +1,4 @@
+#!/bin/bash
+export RUST_LOG=info
+export REPLICATION_ENABLED=false
+export PRIV_KEY=6d657bbe6f7604fb53bc22e0b5285d3e2ad17f64441b2dc19b648933850f9b46

@@ -1,0 +1,37 @@
+version: '3'  # Specifying docker-compose version for clarity
+services:
+  l1x_core_node:
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    container_name: l1x_core_node
+    volumes:
+      - ./target/release/server:/l1x/l1x_core_node
+      - ./run_l1x_core_node.sh:/l1x/run_l1x_core_node.sh
+      - ./config.toml:/l1x/config.toml
+      - ./chain_data:/l1x/l1x_data
+    command: ./run_l1x_core_node.sh
+    restart: on-failure
+    network_mode: "host"
+    depends_on:
+      - l1x_core_db
+
+  l1x_core_db:
+    image: postgres:16
+    container_name: l1x_core_db  # Optional for naming the container
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+    volumes:
+      - l1x_core_db_data:/var/lib/postgresql/data  # Mapping host volume to container's data directory
+      - ./l1x_core_db.conf:/etc/postgresql/postgresql.conf:ro
+    network_mode: "host"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  l1x_core_db_data:  # Defining the named volume
+    name: l1x_core_db_data

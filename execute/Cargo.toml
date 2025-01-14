@@ -1,0 +1,71 @@
+[package]
+name = "execute"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = { workspace = true }
+tempfile = "3.6.0"
+log = "0.4.18"
+hex = { workspace = true }
+secp256k1 = { version = "0.28.2", features = [] }
+serial_test = "3.0.0"
+lazy_static = "1.4"
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+state = { package = 'state', path = '../state', default-features = false }
+contract = { package = 'contract', path = '../contract', default-features = false }
+contract-instance = { package = 'contract_instance', path = '../contract_instance', default-features = false }
+contract-instance-manager = { package = 'contract_instance_manager', path = '../contract_instance_manager', default-features = false }
+evm-interpreter = { package = 'evm-interpreter', path = '../evm_interpreter', features = ["std"] }
+account = { package = 'account', path = '../account', default-features = false }
+block = { package = 'block', path = '../block', default-features = false }
+fee = { package = 'fee', path = '../fee', default-features = false }
+staking = { package = 'staking', path = '../staking', default-features = false }
+system = { package = 'system', path = '../system', default-features = false }
+event = { package = 'event', path = '../event', default-features = false }
+l1x_evm = { package = 'l1x_evm', path = '../l1x_evm', default-features = false }
+tokio = { workspace = true }
+traits = { package = 'traits', path = '../traits', default-features = false }
+util = { package = 'util', path = '../util', default-features = false }
+mint = { package = 'mint', path = '../mint', default-features = false }
+async-scoped = { version = "0.8.0", features = ["use-tokio"] }
+serde_json = "1.0.96"
+rand = "0.8.5"
+sha3 = "0.10.8"
+rlp = { version = "0.5", default-features = false }
+
+rbpf = { package = 'rbpf', path = '../vm/l1x-rbpf/' }
+l1x-ebpf-runtime = { package = 'l1x-ebpf-runtime', path = '../vm/l1x-ebpf-runtime/' }
+vm-outcome = { package = 'vm-outcome', path = '../vm/vm-outcome/' }
+vm-execution-fee = { package = 'vm-execution-fee', path = '../vm/vm-execution-fee/' }
+async-trait = { workspace = true }
+
+diesel_migrations = "2.1.0"
+diesel = { version = "2.1.3", features = [
+    "postgres",
+    "chrono",
+    "numeric",
+    "r2d2",
+] }
+
+evm = "0.41.0"
+evm-runtime = "0.41.0"
+primitive-types = { version = "0.12", default-features = false }
+evm-precompile = { package = 'evm-precompile', path = '../evm_precompile', features = ["std"] }
+
+db = { package = 'db', path = '../db', default-features = false }
+db_traits = { package = 'db_traits', path = '../db_traits', default-features = false }
+compile_time_config = { package = 'compile_time_config', path = '../compile_time_config'}
+system_contracts = { package = 'system_contracts', path = '../system_contracts'}
+runtime_config = { package = 'runtime_config', path = '../runtime_config'}
+[dev-dependencies]
+l1x-vrf = { package = 'l1x-vrf', path = '../l1x-vrf', default-features = false }
+serde = { version = "1.0.163", features = ["derive"] }
+serde_json = "1.0.96"
+bincode = { workspace = true }
+db = { package = 'db', path = '../db', default-features = false }
+
+[lints]
+workspace = true

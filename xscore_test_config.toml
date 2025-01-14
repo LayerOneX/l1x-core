@@ -1,0 +1,14 @@
+[node_performance_metrics]
+uptime = 100.0
+participation_history = 7000
+response_time_ms = 5
+security_measure_score = 0.0
+
+[node_stake_info]
+stake_balance = 90000
+stake_age_days = 1800
+locking_period_days = 900
+
+[xscore_weights]
+weight_for_stakescore = 0.65
+weight_for_kinscore = 0.5

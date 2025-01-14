@@ -1,0 +1,13 @@
+{
+  "xtalk_smart_contract_deployment": [
+    "PUBLIC",
+    "XTALK",
+    {
+      "file": "../validate/src/xtalk_contract/xtalk_nft_ad_flow_contract.o"
+    },
+    0,
+    {
+      "text": "00000000000000000000000000000000"
+    }
+  ]
+}

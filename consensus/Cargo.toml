@@ -1,0 +1,44 @@
+[package]
+name = "consensus"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+mempool = { package = 'mempool', path = '../mempool', default-features = false }
+cluster = { package = 'cluster', path = '../cluster', default-features = false }
+account = { package = 'account', path = '../account', default-features = false }
+system = { package = 'system', path = '../system', default-features = false }
+validate = { package = 'validate', path = '../validate', default-features = false }
+block-proposer = { package = 'block_proposer', path = '../block_proposer', default-features = false }
+vote = { package = 'vote', path = '../vote', default-features = false }
+vote_result = { package = 'vote_result', path = '../vote_result', default-features = false }
+staking = { package = 'staking', path = '../staking', default-features = false }
+validator = { package = 'validator', path = '../validator', default-features = false }
+contract = { package = 'contract', path = '../contract', default-features = false }
+contract-instance = { package = 'contract_instance', path = '../contract_instance', default-features = false }
+execute = { package = 'execute', path = '../execute', default-features = false }
+block = { package = 'block', path = '../block', default-features = false }
+l1x-vrf = { package = 'l1x-vrf', path = '../l1x-vrf', default-features = false }
+l1x_htm = { package = 'l1x_htm', path = '../l1x_htm', default-features = false }
+l1x_node_health = { package = 'l1x_node_health', path = '../l1x_node_health', default-features = false }
+compile_time_config = { package = 'compile_time_config', path = '../compile_time_config' }
+node_info = { package = 'node_info', path = '../node_info', default-features = false }
+db = { package = 'db', path = '../db', default-features = false }
+secp256k1 = { version = "0.28.2", features = [] }
+log = "0.4.18"
+anyhow = { workspace = true }
+tokio = { workspace = true }
+serde_json = "1.0.107"
+futures = "0.3.29"
+hex = { workspace = true }
+bincode = { workspace = true }
+util = { package = 'util', path = '../util', default-features = false }
+libp2p = "0.51.3"
+runtime_config = { package = 'runtime_config', path = '../runtime_config' }
+
+
+[lints]
+workspace = true

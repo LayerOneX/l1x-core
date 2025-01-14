@@ -1,0 +1,11 @@
+# Basic
+hard_tabs = false
+max_width = 120
+# Imports
+reorder_imports = true
+# Consistency
+newline_style = "Unix"
+# Misc
+chain_width = 80
+match_arm_leading_pipes = "Preserve"
+use_field_init_shorthand = true

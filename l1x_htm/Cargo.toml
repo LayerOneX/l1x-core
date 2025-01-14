@@ -1,0 +1,17 @@
+[package]
+name = "l1x_htm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { version = "1.0.163", features = ["derive"] }
+ndarray = "0.15.6"
+statrs = "0.16.0"
+rand = "0.8.5"
+log = "0.4.18"
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+system = { package = 'system', path = '../system', default-features = false }
+
+[lints]
+workspace = true

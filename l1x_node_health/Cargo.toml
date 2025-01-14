@@ -1,0 +1,33 @@
+[package]
+name = "l1x_node_health"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+log = "0.4.18"
+scylla = "0.11.1"
+bincode="1.3.3"
+serde_bytes = "0.11.9"
+serde_json = "1.0.96"
+serial_test = "3.0.0"
+chrono = "0.4.27"
+rocksdb = "0.21.0"
+serde = { version = "1.0.163", features = ["derive"] }
+async-trait = { workspace = true }
+tokio = { workspace = true }
+diesel = { version = "2.1.3", features = [
+	"postgres",
+	"chrono",
+	"numeric",
+	"r2d2",
+] }
+bigdecimal = "0.4.2"
+db_traits = { package = 'db_traits', path = '../db_traits', default-features = false }
+util = { package = 'util', path = '../util', default-features = false }
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+system = { package = 'system', path = '../system', default-features = false }
+db = { package = 'db', path = '../db', default-features = false }
+
+[lints]
+workspace = true

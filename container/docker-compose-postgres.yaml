@@ -1,0 +1,46 @@
+version: "3"
+services:
+  l1x-node:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: l1x-node
+    entrypoint: /l1x/l1x-consensus/container/kickstart-server_1.sh
+    environment:
+      - POSTGRES_HOST=postgres1
+      - POSTGRES_PORT=5432
+    command: /l1x/l1x-consensus/container/run_1.sh
+    volumes:
+      - ../:/l1x/l1x-consensus
+      - ../container/config_1.toml:/l1x/l1x-consensus/config.toml
+    ports:
+      - 50051:50051 
+      - 50052:50052
+      - 5010:5010
+    restart: on-failure
+    networks:
+      - l1x_network
+    depends_on:
+      - postgres1
+
+  postgres1:
+    image: postgres
+    container_name: postgres1
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - l1x_network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  l1x_network:
+    driver: bridge

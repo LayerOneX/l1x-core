@@ -1,0 +1,37 @@
+[package]
+name = "evm-precompile"
+version = "0.0.0-dev"
+edition = "2021"
+description = "Standard EVM precompiles."
+
+[dependencies]
+evm = "0.41.0"
+evm-runtime = "0.41.0"
+evm-gasometer = "0.41.0"
+evm-interpreter = { package = 'evm-interpreter', path = '../evm_interpreter', features = ["std"] }
+primitive-types = { version = "0.12.2", default-features = false, features = ["rlp"] }
+
+bn = { package = "substrate-bn", version = "0.6", default-features = false }
+k256 = { version = "0.13", features = ["ecdsa"], default-features = false }
+num = { version = "0.4", default-features = false, features = ["alloc"] }
+ripemd = { version = "0.1", default-features = false }
+sha2 = { version = "0.10", default-features = false }
+sha3 = { version = "0.10", default-features = false }
+hex = { workspace = true }
+log = "0.4.18"
+
+[features]
+default = ["std"]
+std = [
+	"evm-interpreter/std",
+	"k256/std",
+	"num/std",
+	"primitive-types/std",
+	"ripemd/std",
+	"sha2/std",
+	"sha3/std",
+]
+
+
+[lints]
+workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "l1x-test-contract"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+crate-type = ["cdylib"]
+
+[workspace]
+
+[dependencies]
+borsh = { version = "0.9", features = ["const-generics"] }
+l1x-sdk = "0.3.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints.rust]
+unused_imports = "deny"
+unused_braces = "deny"

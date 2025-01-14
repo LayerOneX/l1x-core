@@ -1,0 +1,5 @@
+{
+    "contract_instance_address": {"hex": "f92f7a0db16b24ee927ebb00ab0a4cbc3fabf084"},
+    "function": {"text": "ft_name"},
+    "arguments": {"hex": "7b7d"}
+}

@@ -1,0 +1,28 @@
+[package]
+name = "l1x-ebpf-runtime"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "1.0"
+anyhow = { workspace = true }
+byteorder = "1.2"
+elf = "0.0.10"
+hash32 = "0.3"
+hex = { workspace = true }
+rbpf = { path = "../l1x-rbpf" }
+goblin = "0.6"
+num-traits = "0.2"
+num-derive = "0.3"
+simple_logger = "4.1.0"
+log = "0.4.17"
+borsh = { version = "0.9", features = ["const-generics"] }
+binread = { version = "2.2.0", features = ["const_generics"] }
+l1x-consensus-primitives = { path = "../../primitives", package = "primitives"}
+l1x-consensus-traits = { path = "../../traits", package = "traits" }
+l1x-consensus-system = { path = "../../system", package = "system" }
+l1x-consensus-util = { path = "../../util", package = "util" }
+vm-execution-fee = { path = "../vm-execution-fee", package = "vm-execution-fee" }
+
+[lints]
+workspace = true

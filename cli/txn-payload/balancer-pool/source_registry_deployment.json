@@ -1,0 +1,13 @@
+{
+  "smart_contract_deployment": [
+    "PRIVATE",
+    "L1XVM",
+    {
+      "file": "../validate/src/xtalk_contract/balancer-pool/source_registry.o"
+    },
+    0,
+    {
+      "text": "00000000000000000000000000000000"
+    }
+  ]
+}

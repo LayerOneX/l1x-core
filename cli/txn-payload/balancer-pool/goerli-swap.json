@@ -1,0 +1,10 @@
+{
+    "smart_contract_function_call": {
+      "contract_instance_address": { "hex": "3db5eab26e452963c52b2d718930cc15c20d5382" },
+      "function": { "text": "register_new_source" },
+        "arguments": {
+          "text": "{\"flow_contract_address\": \"e1459f3fdaeb2b7c30da2191e02d50f09d9f25b8\",\"source_id\": \"2\",\"chain\": \"goerli\",\"source_type\": \"swap\",\"smart_contract_address\": \"50434D6E4a9c4DF50868594271BdE50A0ec29d83\",\"event_type\": \"\",\"event_filters\": [\"bb72420355344cfb753334a26a0351680ee600bb3ad18ddf6b6331431949c14c\"]}"
+      },
+      "deposit":0
+    }
+  }

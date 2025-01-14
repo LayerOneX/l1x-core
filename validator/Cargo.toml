@@ -1,0 +1,47 @@
+[package]
+name = "validator"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+
+hex = { workspace = true }
+bincode = { workspace = true }
+anyhow = { workspace = true }
+scylla = "0.11.1"
+tokio = { workspace = true }
+num-traits = "0.2.15"
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+compile_time_config = { package = 'compile_time_config', path = '../compile_time_config' }
+runtime_config = { package = 'runtime_config', path = '../runtime_config' }
+rocksdb = "0.21.0"
+
+staking = { package = 'staking', path = '../staking', default-features = false }
+db = { package = 'db', path = '../db', default-features = false }
+p2p = { package = 'p2p', path = '../p2p', default-features = false }
+system = { package = 'system', path = '../system', default-features = false }
+serial_test = "3.0.0"
+log = "0.4.20"
+util = { package = 'util', path = '../util', default-features = false }
+db_traits = { package = 'db_traits', path = '../db_traits', default-features = false }
+l1x_node_health = { package = 'l1x_node_health', path = '../l1x_node_health', default-features = false }
+async-trait = { workspace = true }
+node_info = { package = 'node_info', path = '../node_info', default-features = false }
+diesel = { version = "2.1.3", features = [
+    "postgres",
+    "chrono",
+    "numeric",
+    "r2d2",
+] }
+bigdecimal = "0.4.2"
+xscore = { package = 'xscore', path = '../xscore', default-features = false }
+block = { package = 'block', path = '../block', default-features = false }
+serde = { version = "1.0.163", features = ["derive"] }
+serde_json = "1.0.96"
+libp2p = "0.51.3"
+futures = "0.3.29"
+rand = "0.7.0"
+sha2 = "0.10.6"

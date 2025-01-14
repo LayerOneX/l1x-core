@@ -1,0 +1,26 @@
+[package]
+name = "traits"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true }
+db = { package = 'db', path = '../db', default-features = false }
+state = { package = 'state', path = '../state', default-features = false }
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+system = { package = "system", path = "../system" }
+vm-outcome = { package = 'vm-outcome', path = '../vm/vm-outcome', default-features = false }
+staking = { package = 'staking', path = '../staking', default-features = false }
+account = { package = 'account', path = '../account', default-features = false }
+event = { package = 'event', path = '../event', default-features = false }
+contract = { package = 'contract', path = '../contract', default-features = false }
+contract-instance = { package = 'contract_instance', path = '../contract_instance', default-features = false }
+l1x_evm = { package = 'l1x_evm', path = '../l1x_evm', default-features = false }
+evm-runtime = "0.41.0"
+
+
+[lints]
+workspace = true

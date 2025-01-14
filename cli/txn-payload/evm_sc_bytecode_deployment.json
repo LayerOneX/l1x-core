@@ -1,0 +1,11 @@
+{
+  "smart_contract_deployment": [
+    "PUBLIC",
+    "EVM",
+    0,
+    "00000000000000000000000000000000",
+    {
+      "file": "../solidity/pool-stable/artifacts/contracts/ComposableStablePool.sol/ComposableStablePool.json"
+    }
+  ]
+}

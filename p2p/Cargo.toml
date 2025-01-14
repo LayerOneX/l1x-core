@@ -1,0 +1,42 @@
+[package]
+name = "p2p"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+db = { package = 'db', path = '../db', default-features = false }
+node_info = { package = 'node_info', path = '../node_info', default-features = false }
+block = { package = 'block', path = '../block', default-features = false }
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+system = { package = 'system', path = '../system', default-features = false }
+secp256k1 = { version = "0.28.2", features = [ "global-context"] }
+libp2p = { version = "0.51.3", features = ["macros", "tcp", "dns", "tokio", "websocket", "noise", "mplex", "yamux", "kad", "identify", "gossipsub", "mdns", "quic", "autonat", "request-response"]}
+libp2p-gossipsub = { version = "0.44.4" }
+tokio = { workspace = true }
+tokio-stream = "0.1.14"
+serde = {version = "1.0.163", features = ["derive"] }
+serde_json = "1.0.96"
+pretty_env_logger = "0.5.0"
+enum-as-inner = "=0.5.1" # temporary fix for error[E0592]: duplicate definitions with name `is_soa` https://github.com/bluejekyll/trust-dns/issues/1946
+aes-gcm = "0.10.3" # Makes a dependency error dissapear
+either = "1.8"
+multiaddr = { version = "0.18.1" }
+void = "1.0.2"
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+log = "0.4.18"
+itertools = "0.12.0"
+bincode="1.3.3"
+rand = "0.7.0"
+l1x-vrf = { package = 'l1x-vrf', path = '../l1x-vrf', default-features = false }
+l1x_htm = { package = 'l1x_htm', path = '../l1x_htm', default-features = false }
+
+futures = "0.3.29"
+util = { package = 'util', path = '../util', default-features = false }
+compile_time_config = { package = 'compile_time_config', path = '../compile_time_config' }
+
+
+[lints]
+workspace = true

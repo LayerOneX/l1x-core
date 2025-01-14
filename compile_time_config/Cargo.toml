@@ -1,0 +1,18 @@
+[package]
+name = "compile_time_config"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+hex-literal = { workspace = true }
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+
+[features]
+devnet = []
+testnet = []
+mainnet = []
+
+[lints]
+workspace = true

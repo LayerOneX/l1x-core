@@ -1,0 +1,8 @@
+{
+  "smart_contract_function_call": {
+    "contract_instance_address": { "hex": "1419cdb3c8f7e3aa0aaafd2a60a4ea949053a497" },
+    "function": { "text": "ft_namewewew" },
+    "deposit": 0,
+    "arguments": { "text": "{}" }
+  }
+}

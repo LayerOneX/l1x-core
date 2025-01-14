@@ -1,0 +1,14 @@
+# Use an official Rust runtime as a parent image
+FROM rust:1.74
+
+# Set the working directory in the container
+WORKDIR /build
+
+# Install any necessary dependencies
+RUN apt-get update && \
+    apt-get install -y git clang curl libssl-dev llvm libudev-dev make protobuf-compiler
+
+RUN rustup default stable && rustup component add rustfmt && rustup component add clippy
+
+# Execute the script when the container starts
+CMD ["sleep","infinity"]

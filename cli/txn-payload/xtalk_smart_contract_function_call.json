@@ -1,0 +1,8 @@
+{
+  "xtalk_smart_contract_function_call": {
+    "contract_instance_address": { "hex": "7ae69226335246eaccc4c936586eaccaf55ec3b5" },
+    "function": { "text": "total_events" },
+    "deposit": 0,
+    "arguments": { "text": "{}" }
+  }
+}

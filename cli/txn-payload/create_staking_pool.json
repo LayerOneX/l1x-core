@@ -1,0 +1,9 @@
+{
+  "create_staking_pool": {
+    "min_stake": 1000,
+    "max_stake": 100000,
+    "min_pool_balance": 100,
+    "max_pool_balance": 10000000,
+    "staking_period": 1000000
+  }
+}

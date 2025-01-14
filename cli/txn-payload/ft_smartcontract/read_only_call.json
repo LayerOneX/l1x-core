@@ -1,0 +1,7 @@
+{
+  "smart_contract_function_call": {
+    "contract_instance_address": { "hex": "af806ab36aa259079a01928f47ce0041bfdd086a"},
+    "function": {"text": "ft_balance_of"},
+    "arguments": {"hex": "7b20226163636f756e745f6964223a20223137376638383832376130643166623166313063343437343362653631646164613966646233313822207d"}
+  }
+}

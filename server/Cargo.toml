@@ -1,0 +1,116 @@
+[package]
+name = "server"
+version = { workspace = true }
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+clap = { version = "4.4.8", features = ["derive"] }
+itertools = "0.12.0"
+jsonrpsee = { version = "0.20.3", features = [
+    "server",
+    "ws-client",
+    "macros",
+    "client-ws-transport-native-tls",
+] }
+jsonrpsee-core = "0.21.0"
+hex = { workspace = true }
+hyper = "1.0.1"
+l1x-rpc = { workspace = true }
+sha2 = "0.10.7"
+diesel = { version = "2.1.3", features = [
+    "postgres",
+    "chrono",
+    "numeric",
+    "r2d2",
+] }
+bincode = { workspace = true }
+protobuf = "3"
+
+lazy_static = "1.4.0"
+libp2p = { version = "0.51.3", features = ["secp256k1"] }
+log = "0.4.18"
+pretty_env_logger = "0.5.0"
+primitive-types = { version = "0.12", default-features = false }
+prost = "0.12.2"
+prost-types = "0.12.2"
+secp256k1 = { version = "0.28.2", no-default = true, features = ["recovery"] }
+libsecp256k1 = "0.7.1"
+serde = { version = "1.0.192", features = ["derive"] }
+serde_json = "1.0.108"
+thiserror = "1.0.50"
+tokio = { workspace = true }
+tonic = "0.9.2"
+tonic-web = "0.9.2"
+tower = { version = "0.4.13", features = ["full"] }
+tower-http = { version = "0.4.4", features = ["full"] }
+tokio-stream = "0.1.14"
+futures-core = "0.3.29"
+ethers = { version = "2.0.11", features = ["ws", "rustls"] }
+alloy-primitives = "0.5.0"
+alloy-dyn-abi = "0.5.1"
+rlp = "0.5.2"
+dotenvy = "0.15.7"
+fc-rpc-core = "1.0.0"
+async-scoped = { version = "0.8.0", features = ["use-tokio"] }
+ethereum-types = "0.14.1"
+async-stream = "0.3.5"
+
+
+account = { package = 'account', path = '../account', default-features = false }
+system_contracts = { package = 'system_contracts', path = '../system_contracts' }
+state = { package = 'state', path = '../state', default-features = false }
+db = { package = 'db', path = '../db', default-features = false }
+block = { package = 'block', path = '../block', default-features = false }
+contract = { package = 'contract', path = '../contract', default-features = false }
+contract-instance = { package = 'contract_instance', path = '../contract_instance', default-features = false }
+event = { package = 'event', path = '../event', default-features = false }
+fee = { package = 'fee', path = '../fee', default-features = false }
+execute = { package = 'execute', path = '../execute', default-features = false }
+l1x-vrf = { package = 'l1x-vrf', path = '../l1x-vrf', default-features = false }
+l1x_node_health = { package = 'l1x_node_health', path = '../l1x_node_health', default-features = false }
+node_crate = { package = 'node', path = '../node', default-features = false }
+system = { package = 'system', path = '../system', default-features = false }
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+mint = { package = 'mint', path = '../mint', default-features = false }
+genesis = { package = 'genesis', path = '../genesis', default-features = false }
+staking = { package = 'staking', path = '../staking', default-features = false }
+staking_manager = { package = 'staking_manager', path = '../staking_manager', default-features = false }
+validator = { package = 'validator', path = '../validator', default-features = false }
+validate = { package = 'validate', path = '../validate', default-features = false }
+types = { package = 'types', path = '../types', default-features = false }
+node-info = { package = 'node_info', path = '../node_info', default-features = false }
+util = { package = 'util', path = '../util', default-features = false }
+compile_time_config = { package = 'compile_time_config', path = '../compile_time_config' }
+block_proposer = { package = 'block_proposer', path = '../block_proposer', default-features = false }
+vote_result = { package = 'vote_result', path = '../vote_result', default-features = false }
+runtime_config = { package = 'runtime_config', path = '../runtime_config' }
+ethereum = { version = "0.15.0", default-features = false, features = [
+    "with-serde",
+] }
+ethabi = "18.0.0"
+structopt = "0.3.26"
+directories = "5.0.1"
+toml = "0.8.8"
+evm-runtime = "0.41.0"
+eth-keystore = "0.5.0"
+aws-sdk-s3 = "0.30.0"
+aws-smithy-types = "0.56.1"
+aws-smithy-http = "0.56.1"
+tokio-util = "0.7.8"
+dns-lookup = "2.0.4"
+regex = "1.10.2"
+moka = "0.11.3"
+
+[dev-dependencies]
+mockall = "0.11.4"
+
+[[bin]]
+name = "server"
+path = "src/main.rs"
+
+[lints]
+workspace = true

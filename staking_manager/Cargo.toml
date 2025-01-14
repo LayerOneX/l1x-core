@@ -1,0 +1,25 @@
+[package]
+name = "staking_manager"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+hex = { workspace = true }
+anyhow = { workspace = true }
+num-traits = "0.2.15"
+log = "0.4.14"
+
+# L1X Dependencies
+db = { package = 'db', path = '../db', default-features = false }
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+system = { package = 'system', path = '../system', default-features = false }
+account = { package = 'account', path = '../account', default-features = false }
+staking = { package = 'staking', path = '../staking', default-features = false }
+[dev-dependencies]
+common = { package = 'common', path = '../common', default-features = false }
+
+
+[lints]
+workspace = true

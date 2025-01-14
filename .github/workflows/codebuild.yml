@@ -1,0 +1,119 @@
+name: Verify Compilation For PR
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  # push:
+  #   branches:
+  #     - '**'  # Trigger on any branch push
+
+
+jobs:
+  trigger_codebuild:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Code Style Check
+      run: |
+        bash ci/run_codestyle_check.sh
+    
+    - name: Unit Tests check
+      run: |
+        bash ci/run_unit_tests.sh
+
+    - name: Functional Tests Check
+      run: |
+        bash ci/run_functional_tests.sh
+        
+    - name: Set up AWS CLI
+      run: |
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+        unzip -q /tmp/awscliv2.zip -d /tmp
+        rm /tmp/awscliv2.zip
+        sudo /tmp/aws/install --update
+        rm -rf /tmp/aws/
+
+    - name: Trigger AWS CodeBuild
+      id: codebuild
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.BUILD_AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.BUILD_AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.BUILD_AWS_REGION }}
+        CODEBUILD_PROJECT_NAME: ${{ secrets.BUILD_CODEBUILD_PROJECT_NAME }}
+      run: |
+        # Determine the event type and set the COMMIT_ID
+        if [[ $GITHUB_EVENT_NAME == "push" ]]; then
+          COMMIT_ID=$(jq -r .after < $GITHUB_EVENT_PATH)
+        elif [[ $GITHUB_EVENT_NAME == "pull_request" ]]; then
+          COMMIT_ID=$(jq -r .pull_request.head.sha < $GITHUB_EVENT_PATH)
+        fi
+
+        # Trigger CodeBuild with source version set to the commit ID and privileged mode enabled
+        build_id=$(aws codebuild start-build --project-name $CODEBUILD_PROJECT_NAME \
+          --region $AWS_REGION \
+          --source-version $COMMIT_ID \
+          --query 'build.id' --output text)
+        echo "::set-output name=build_id::$build_id"
+
+    - name: Poll CodeBuild for status
+      id: poll_codebuild
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.BUILD_AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.BUILD_AWS_SECRET_ACCESS_KEY }}
+        AWS_REGION: ${{ secrets.BUILD_AWS_REGION }}
+        BUILD_ID: ${{ steps.codebuild.outputs.build_id }}
+      run: |
+        while true; do
+          build_status=$(aws codebuild batch-get-builds --ids $BUILD_ID --region $AWS_REGION --query 'builds[0].buildStatus' --output text)
+          echo "Current build status: $build_status"
+          if [[ "$build_status" == "SUCCEEDED" ]]; then
+            echo "Build succeeded"
+            echo "::set-output name=status::success"
+            break
+          elif [[ "$build_status" == "FAILED" ]]; then
+            echo "Build failed"
+            echo "::set-output name=status::failure"
+            break
+          elif [[ "$build_status" == "FAULT" || "$build_status" == "TIMED_OUT" || "$build_status" == "STOPPED" ]]; then
+            echo "Build errored with status: $build_status"
+            echo "::set-output name=status::error"
+            break
+          else
+            echo "Build in progress, waiting..."
+            sleep 15
+          fi
+        done
+
+    - name: Update GitHub commit status
+      env:
+        GITHUB_TOKEN: ${{ secrets.BUILD_GITHUB_TOKEN }}
+        BUILD_STATUS: ${{ steps.poll_codebuild.outputs.status }}
+        AWS_REGION: ${{ secrets.BUILD_AWS_REGION }}
+        CODEBUILD_PROJECT_NAME: ${{ secrets.BUILD_CODEBUILD_PROJECT_NAME }}
+        BUILD_ID: ${{ steps.codebuild.outputs.build_id }}
+      run: |
+        if [[ "$BUILD_STATUS" == "success" ]]; then
+          status="success"
+          description="Compilation For PR Succeeded"
+        elif [[ "$BUILD_STATUS" == "failure" ]]; then
+          status="failure"
+          description="Compilation For PR Failed"
+        else
+          status="error"
+          description="Compilation For PR Errored"
+        fi
+
+        # Determine the event type and set the COMMIT_ID
+        if [[ $GITHUB_EVENT_NAME == "push" ]]; then
+          sha=$(jq -r .after < $GITHUB_EVENT_PATH)
+        elif [[ $GITHUB_EVENT_NAME == "pull_request" ]]; then
+          sha=$(jq -r .pull_request.head.sha < $GITHUB_EVENT_PATH)
+        fi
+
+        owner=$(jq -r .repository.owner.login < $GITHUB_EVENT_PATH)
+        repo=$(jq -r .repository.name < $GITHUB_EVENT_PATH)
+        curl -X POST -H "Authorization: token $GITHUB_TOKEN" \
+          -d "{\"state\":\"$status\",\"target_url\":\"https://$AWS_REGION.console.aws.amazon.com/codesuite/codebuild/projects/$CODEBUILD_PROJECT_NAME/build/$BUILD_ID\",\"description\":\"$description\",\"context\":\"CodeBuild\"}" \
+          "https://api.github.com/repos/$owner/$repo/statuses/$sha"

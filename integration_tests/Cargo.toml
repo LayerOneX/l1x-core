@@ -1,0 +1,24 @@
+[package]
+name = "tests"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+tokio = { workspace = true }
+cli = { package = 'cli', path = '../cli', default-features = false }
+l1x-rpc = { git = 'https://github.com/L1X-Foundation-Consensus/l1x-rpc.git', branch = "feat/add_deposit_to_tx" }
+tonic = "0.9.2"
+serde_json = "1.0.116"
+serde = { version = "1.0.201", features = ["derive"] }
+hex = { workspace = true }
+anyhow = { workspace = true }
+toml = "0.8.12"
+
+[build-dependencies]
+cargo-l1x = "0.1"
+
+[lints.rust]
+unused_imports = "deny"
+unused_braces = "deny"

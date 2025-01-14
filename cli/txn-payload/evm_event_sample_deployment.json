@@ -1,0 +1,13 @@
+{
+  "smart_contract_deployment": [
+    "PUBLIC",
+    "EVM",
+    {
+      "file": "sol/event-example.compiled"
+    },
+    0,
+    {
+      "text": "00000000000000000000000000000000"
+    }
+  ]
+}

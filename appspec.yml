@@ -1,0 +1,18 @@
+version: 0.0
+os: linux
+files:
+  - source: /
+    destination: /opt/app
+hooks:
+  BeforeInstall:
+    - location: aws_deployment/production/scripts/before_install.sh
+      timeout: 120
+      runas: root
+  AfterInstall:
+    - location: aws_deployment/production/scripts/after_install.sh
+      timeout: 1200
+      runas: root
+  ApplicationStart:
+    - location: aws_deployment/production/scripts/application_start.sh
+      timeout: 120
+      runas: root

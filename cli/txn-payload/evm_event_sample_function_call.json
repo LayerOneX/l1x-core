@@ -1,0 +1,14 @@
+{
+  "smart_contract_function_call": {
+    "contract_instance_address": {
+      "hex": "3dad9b740231ae1161c628dd7d28ea7ec8b63a19"
+    },
+    "function": {
+      "text": ""
+    },
+    "arguments": {
+      "hex": "c605f76c"
+    },
+    "deposit": 0
+  }
+}

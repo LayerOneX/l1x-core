@@ -1,0 +1,50 @@
+[package]
+name = "vote_result"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = { version = "1.0.163", features = ["derive"] }
+serde_bytes = "0.11.9"
+hex = { workspace = true }
+bincode = { workspace = true }
+anyhow = { workspace = true }
+tempfile = "3.5.0"
+scylla = "0.11.1"
+tokio = { workspace = true }
+num-traits = "0.2.15"
+async-trait = { workspace = true }
+log = "0.4.18"
+dotenv = "0.15.0"
+futures = "0.3.28"
+secp256k1 = { version = "0.28.2", features = [] }
+# L1X dependencies
+account = { package = 'account', path = '../account', default-features = false }
+staking = { package = 'staking', path = '../staking', default-features = false }
+system = { package = 'system', path = '../system', default-features = false }
+db = { package = 'db', path = '../db', default-features = false }
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+validate = { package = 'validate', path = '../validate', default-features = false }
+block_proposer = { package = 'block_proposer', path = '../block_proposer', default-features = false }
+validator = { package = 'validator', path = '../validator', default-features = false }
+vote = { package = 'vote', path = '../vote', default-features = false }
+l1x-vrf = { package = 'l1x-vrf', path = '../l1x-vrf', default-features = false }
+serial_test = "3.0.0"
+serde_json = "1.0.107"
+db_traits = { package = 'db_traits', path = '../db_traits', default-features = false }
+rocksdb = "0.21.0"
+diesel = { version = "2.1.3", features = [
+    "postgres",
+    "chrono",
+    "numeric",
+    "r2d2",
+] }
+bigdecimal = "0.4.2"
+util = { package = 'util', path = '../util', default-features = false }
+compile_time_config = { package = 'compile_time_config', path = '../compile_time_config' }
+
+
+[lints]
+workspace = true

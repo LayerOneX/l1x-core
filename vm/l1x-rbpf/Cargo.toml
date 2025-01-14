@@ -1,0 +1,49 @@
+[package]
+
+# Project metadata
+name = "rbpf"
+version = "0.1.0"
+authors = ["Quentin <quentin@isovalent.com>"]
+
+# Additional metadata for packaging
+description = "Virtual machine and JIT compiler for eBPF programs"
+repository = "https://github.com/qmonnet/rbpf"
+readme = "README.md"
+keywords = ["BPF", "eBPF", "interpreter", "JIT", "filtering"]
+license = "Apache-2.0/MIT"
+
+# Packaging directives
+include = [
+    "src/**",
+    "examples/**",
+    "tests/**",
+    "bench/**",
+    "LICENSE*",
+    "Cargo.toml",
+]
+
+[lib]
+# TODO: Need to fix and enable
+doctest = false
+
+[dependencies]
+
+thiserror = "1.0"
+anyhow = { workspace = true }
+combine = "2.5"
+libc = "0.2"
+time = "0.1"
+byteorder = "1.2"
+rand = "0.8"
+
+l1x-consensus-primitives = { path = "../../primitives", package = "primitives"}
+
+[dev-dependencies]
+
+elf = "0.0.10"
+json = "0.11"
+hex = { workspace = true }
+
+
+[lints]
+workspace = true

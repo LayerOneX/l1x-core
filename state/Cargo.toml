@@ -1,0 +1,28 @@
+[package]
+name = "state"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = { workspace = true }
+log = "0.4.18"
+hex = { workspace = true }
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+contract = { package = 'contract', path = '../contract', default-features = false }
+contract-instance = { package = 'contract_instance', path = '../contract_instance', default-features = false }
+account = { package = 'account', path = '../account', default-features = false }
+block = { package = 'block', path = '../block', default-features = false }
+staking = { package = 'staking', path = '../staking', default-features = false }
+system = { package = 'system', path = '../system', default-features = false }
+event = { package = 'event', path = '../event', default-features = false }
+tokio = { workspace = true }
+tokio-util = "*"
+util = { package = 'util', path = '../util', default-features = false }
+mint = { package = 'mint', path = '../mint', default-features = false }
+
+db = { package = 'db', path = '../db', default-features = false }
+
+[lints]
+workspace = true

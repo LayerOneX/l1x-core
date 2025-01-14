@@ -1,0 +1,9 @@
+{
+  "smart_contract_deployment": [
+    "PUBLIC",
+    "EVM",
+    {
+      "file": "sol/event-example.compiled"
+    }
+  ]
+}

@@ -1,0 +1,238 @@
+# version: "3"
+services:
+  l1x-node1:
+    working_dir: /l1x/l1x-consensus
+    image: l1x-builder
+    entrypoint:
+      - /l1x/l1x-consensus/container/kickstart-server.sh
+      - l1x1
+      - "0"
+      - '10'
+    environment:
+      - POSTGRES_HOST=postgres1
+      - POSTGRES_PORT=5432
+    # command: /l1x/l1x-consensus/container/run_1.sh
+    volumes:
+      - ../:/l1x/l1x-consensus
+      - ../container/config_1.toml:/l1x/l1x-consensus/config.toml
+      - ../target_docker/debug/server:/usr/local/bin/server
+    ports:
+      - 50051:50051
+      - 50052:50052
+      - 5010:5010
+    cap_add:
+      - NET_ADMIN
+    restart: on-failure
+    networks:
+      - l1x_db1
+      - l1x_network
+    depends_on:
+      - postgres11
+
+  l1x-node2:
+    working_dir: /l1x/l1x-consensus
+    image: l1x-builder
+    entrypoint:
+      - /l1x/l1x-consensus/container/kickstart-server.sh
+      - l1x2
+      - '5'
+      - '20'
+    environment:
+      - POSTGRES_HOST=postgres2
+      - POSTGRES_PORT=5433
+    # command: /l1x/l1x-consensus/container/run_2.sh
+    volumes:
+      - ../:/l1x/l1x-consensus
+      - ../container/config_2.toml:/l1x/l1x-consensus/config.toml
+      - ../target_docker/debug/server:/usr/local/bin/server
+    ports:
+      - 50041:50051
+      - 50042:50052
+      - 5012:5010
+    cap_add:
+      - NET_ADMIN
+    restart: on-failure
+    networks:
+      - l1x_db2
+      - l1x_network
+    depends_on:
+      - postgres22
+      - l1x-node1
+
+  l1x-node3:
+    working_dir: /l1x/l1x-consensus
+    image: l1x-builder
+    entrypoint: 
+      - /l1x/l1x-consensus/container/kickstart-server.sh
+      - l1x3
+      - '5'
+      - '30'
+    environment:
+      - POSTGRES_HOST=postgres3
+      - POSTGRES_PORT=5434
+    # command: ./run_3.sh
+    volumes:
+      - ../:/l1x/l1x-consensus
+      - ../container/config_3.toml:/l1x/l1x-consensus/config.toml
+      - ../target_docker/debug/server:/usr/local/bin/server
+    ports:
+      - 50031:50051
+      - 50032:50052
+      - 5013:5010
+    cap_add:
+      - NET_ADMIN
+    restart: on-failure
+    networks:
+      - l1x_db3
+      - l1x_network
+    depends_on:
+      - postgres33
+      - l1x-node1
+  
+  l1x-node4:
+    working_dir: /l1x/l1x-consensus
+    image: l1x-builder
+    entrypoint:
+      - /l1x/l1x-consensus/container/kickstart-server.sh
+      - l1x4
+      - '5'
+      - "50"
+    environment:
+      - POSTGRES_HOST=postgres4
+      - POSTGRES_PORT=5432
+    volumes:
+      - ../:/l1x/l1x-consensus
+      - ../container/config_4.toml:/l1x/l1x-consensus/config.toml
+      - ../target_docker/debug/server:/usr/local/bin/server
+    ports:
+      - 50021:50051
+      - 50022:50052
+      - 5014:5010
+    cap_add:
+      - NET_ADMIN
+    restart: on-failure
+    networks:
+      - l1x_db4
+      - l1x_network
+    depends_on:
+      - postgres44
+      - l1x-node1
+
+  l1x-node5:
+    working_dir: /l1x/l1x-consensus
+    image: l1x-builder
+    entrypoint:
+      - /l1x/l1x-consensus/container/kickstart-server.sh
+      - l1x5
+      - '5'
+      - '60'
+    environment:
+      - POSTGRES_HOST=postgres5
+      - POSTGRES_PORT=5433
+    volumes:
+      - ../:/l1x/l1x-consensus
+      - ../container/config_5.toml:/l1x/l1x-consensus/config.toml
+      - ../target_docker/debug/server:/usr/local/bin/server
+    ports:
+      - 50011:50051
+      - 50012:50052
+      - 5015:5010
+    cap_add:
+      - NET_ADMIN
+    restart: on-failure
+    networks:
+      - l1x_db5
+      - l1x_network
+    depends_on:
+      - postgres55
+      - l1x-node1
+
+  postgres11:
+    image: postgres
+    container_name: postgres11
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data1:/var/lib/postgresql/data
+    networks:
+      - l1x_db1
+
+  postgres22:
+    image: postgres
+    container_name: postgres22
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - '5433:5432'
+    volumes:
+      - postgres_data2:/var/lib/postgresql/data
+    networks:
+      - l1x_db2
+
+  postgres33:
+    image: postgres
+    container_name: postgres33
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - '5434:5432'
+    volumes:
+      - postgres_data3:/var/lib/postgresql/data
+    networks:
+      - l1x_db3
+  postgres44:
+    image: postgres
+    container_name: postgres44
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - '5435:5432'
+    volumes:
+      - postgres_data4:/var/lib/postgresql/data
+    networks:
+      - l1x_db4
+  postgres55:
+    image: postgres
+    container_name: postgres55
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - '5436:5432'
+    volumes:
+      - postgres_data5:/var/lib/postgresql/data
+    networks:
+      - l1x_db5
+
+volumes:
+  postgres_data1:
+    driver: local
+  postgres_data2:
+    driver: local
+  postgres_data3:
+    driver: local
+  postgres_data4:
+    driver: local
+  postgres_data5:
+    driver: local
+
+networks:
+  # A lot of l1x_db* networks are required for Network isolation
+  # Otherwise Traffic Control in ./kickstart_server.sh will add latency to DB connections too
+  l1x_db1:
+  l1x_db2:
+  l1x_db3:
+  l1x_db4:
+  l1x_db5:
+  l1x_network:

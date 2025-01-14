@@ -1,0 +1,53 @@
+[package]
+name = "system"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+serde = { version = "1.0.163", features = ["derive"] }
+serde_json = "1.0.96"
+serde_bytes = "0.11.9"
+sha2 = "0.10.6"
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+libp2p-gossipsub = "0.44.4"
+bincode = { workspace = true }
+log = "0.4.18"
+thiserror = "1.0.44"
+tonic = "0.9.2"
+jsonrpsee = { version = "0.20.3", features = [
+	"server",
+	"ws-client",
+	"macros",
+	"client-ws-transport-native-tls",
+] }
+lazy_static = "1.4.0"
+sha3 = "0.10.8"
+ethers = "2.0.8"
+hex-literal = { workspace = true }
+k256 = "0.13.1"
+secp256k1 = { version = "0.28.2", features = [ "global-context", "rand-std"] }
+hex = { workspace = true }
+l1x-vrf = { package = 'l1x-vrf', path = '../l1x-vrf', default-features = false }
+primitive-types = { version = "0.12", default-features = false }
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+types = { package = 'types', path = '../types', default-features = false }
+compile_time_config = { package = 'compile_time_config', path = '../compile_time_config' }
+evm-runtime = "0.41.0"
+rlp = { version = "0.5", default-features = false }
+tokio = { workspace = true }
+toml = "0.8.1"
+regex = { version = "1.10.2", features = [] }
+ethereum = { version = "0.15.0", default-features = false, features = [
+	"with-serde",
+] }
+rand = "*"
+ethereum-types = "0.14.1"
+eth-keystore = "0.5.0"
+libp2p = { version = "0.51.3", features = ["request-response", "kad"] }
+
+
+[lints]
+workspace = true

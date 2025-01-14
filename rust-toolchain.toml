@@ -1,0 +1,4 @@
+[toolchain]
+channel = "stable" # This is an estimated date; adjust as needed
+components = ["rustfmt", "clippy"]
+profile = "minimal"

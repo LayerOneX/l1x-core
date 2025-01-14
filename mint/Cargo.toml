@@ -1,0 +1,19 @@
+[package]
+name = "mint"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = { workspace = true }
+hex = { workspace = true }
+
+primitives = { package = 'primitives', path = '../primitives', default-features = false }
+system = { package = 'system', path = '../system', default-features = false }
+compile_time_config = { package = 'compile_time_config', path = '../compile_time_config' }
+
+[dev-dependencies]
+
+[lints]
+workspace = true

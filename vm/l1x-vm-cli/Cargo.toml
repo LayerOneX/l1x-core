@@ -1,0 +1,22 @@
+[package]
+name = "l1x-vm-cli"
+version = { workspace = true }
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { version = "4.2", features = ["derive"] }
+env_logger = "0.10.0"
+hex = { workspace = true }
+rocksdb = "0.21.0"
+
+l1x-ebpf-runtime = {path = "../l1x-ebpf-runtime", package = "l1x-ebpf-runtime" }
+l1x-rbpf= {path = "../l1x-rbpf", package = "rbpf" }
+l1x-consensus-primitives = { path="../../primitives", package = "primitives" }
+l1x-consensus-traits = { path="../../traits", package = "traits" }
+l1x-vm-execution-fee = { path="../vm-execution-fee", package = "vm-execution-fee" }
+
+[lints]
+workspace = true

@@ -1,0 +1,74 @@
+version = 1
+
+[version_1]
+org_nodes = [
+    "21f05ed3e1be2b2067a251125fef50db2f97f91a",
+    "caaa9106183068622d3db91c67562811a320653b",
+]
+# Validators will be selected from this list
+whitelisted_nodes = [
+    "21f05ed3e1be2b2067a251125fef50db2f97f91a",
+    "caaa9106183068622d3db91c67562811a320653b",
+    "3601A15113de899599e2A437e4e3cCfeD0C1fC04",
+]
+# block proposers will be selected from this list (these nodes should be present in the whitelisted_nodes)
+whitelisted_block_proposers = [
+    "21f05ed3e1be2b2067a251125fef50db2f97f91a",
+    "caaa9106183068622d3db91c67562811a320653b",
+    "3601A15113de899599e2A437e4e3cCfeD0C1fC04",
+]
+max_validators = 13
+#blacklisted_block_proposers = []
+#blacklisted_nodes = []
+
+# node will be stoped at block_number
+#max_block_height = 50
+
+[version_1.rewards]
+validated_block_reward = "1543209876543210" # in nanoL1X
+
+# Commented out means DISABLED
+# [version_1.blacklist]
+# sender_addresses = []
+# receiver_addresses = []
+
+# [version_1.whitelist]
+# sender_addresses = []
+# receiver_addresses = []
+
+[version_1.xscore]
+xscore_threshold = 0.65
+weight_for_stakescore = 0.5
+weight_for_kinscore = 0.5
+
+[version_1.stake_score]
+min_balance = "10000000000000000000000" # in nanoL1X
+max_balance = "5000000000000000000000000" # in nanoL1X
+min_stake_age = 7 # in days
+max_stake_age = 180 # in days
+min_lock_period = 30
+max_lock_period = 360000000000
+weight_for_stake_balance_6 = 0.1
+weight_for_stake_age_6 = 0.1
+weight_for_locking_period_6 = 0.8
+weight_for_stake_balance_12 = 0.1
+weight_for_stake_age_12 = 0.3
+weight_for_locking_period_12 = 0.6
+weight_for_stake_balance_18 = 0.2
+weight_for_stake_age_18 = 0.4
+weight_for_locking_period_18 = 0.4
+
+[version_1.kin_score]
+min_uptime = 75.0
+max_uptime = 100.0
+min_participation = 80
+max_participation = 100
+min_response_time = 100
+max_response_time = 1000
+min_security_measure = 0.5
+max_security_measure = 1.0
+xscore_threshold = 0.65
+weight_for_uptime = 0.25
+weight_for_participation_history = 0.25
+weight_for_response_time = 0.50
+weight_for_security_measure = 0.0
