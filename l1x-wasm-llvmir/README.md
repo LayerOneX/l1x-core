@@ -1,6 +1,10 @@
 # WASM to LLVM IR code translator
 
+
+The l1x-wasm-llvmir code translator converts L1X smart contract WASM binaries into LLVM IR code format. This translation streamlines the process of porting code from WASM to LLVM IR, and eventually to eBPF code, enabling smooth execution within the L1X VM's eBPF runtime.
+
 Translates a WASM file to L1X VM llvmir representation. Used by `cargo-l1x`
+
 
 Copyright © 2024 L1X. All rights reserved.  
 This is proprietary software owned by L1X.
