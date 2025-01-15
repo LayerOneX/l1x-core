@@ -105,7 +105,7 @@ cargo test
 ## 📢 Communication Channels
 
 Join our community to ask questions, share ideas, or discuss issues:
-- Discord: L1X Developer Community
+- Discord: (https://quick.l1xapp.com/L1XDiscordDevSupport)
 - X (Twitter): @LayerOneX
 
 ## 🔒 Code of Conduct
