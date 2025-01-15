@@ -1,0 +1,32 @@
+[package]
+name = "l1x-wasm-llvmir"
+version = "0.2.1"
+edition = "2021"
+authors = ["L1XFoundation"]
+description = "WASM to LLVMIR translator for the L1X project"
+license = "Polyform-Perimeter-1.0.0"
+keywords = ["l1x"]
+homepage = "https://github.com/L1X-Foundation"
+
+exclude = [
+    "build_ebpf.sh",
+]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[[bin]]
+name = "wasm-llvmir"
+path = "src/main.rs"
+
+[dependencies]
+inkwell = { version = "0.2.0", features = ["llvm15-0"] }
+wasmtime = "0.37.0"
+wasmprinter = "0.2.0"
+wasmparser = "0.102.0"
+wat = "1.0.61"
+cranelift-wasm = "0.94.0"
+rccell = "0.1.3"
+clap = { version = "4.2", features = ["derive"] }
+anyhow = "1.0"
+env_logger = "0.11.3"
+log = "0.4.21"
