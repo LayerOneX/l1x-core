@@ -83,7 +83,7 @@ Using Docker and Docker Compose:
 
 
 ## Contributing
-We welcome contributions from the community! Please see our [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines on:
+We welcome contributions from the community! Please see our [CONTRIBUTING.md](Contributing.md) for detailed guidelines on:
 - Code style and standards
 - Pull request process
 - Issue reporting
