@@ -103,3 +103,5 @@ coverage
 /cli/node_modules
 
 chain_data/*
+config.toml
+update.txt

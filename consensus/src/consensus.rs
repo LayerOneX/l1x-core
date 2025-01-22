@@ -120,7 +120,7 @@ impl<'a>  Consensus {
 	pub async fn receive_signed_node_health(&mut self, signed_node_healths: Vec<NodeHealthPayload>, db_pool_conn: &'a DbTxConn<'a>) -> Result<(), Error> {
 		if let Err(e) = self
 			.network_client_tx
-			.send(BroadcastNetwork::BroadcastSignedNodeHealth(signed_node_healths.clone(), None)) // Used DUMMY_EPOCH it is duplciate operation
+			.send(BroadcastNetwork::BroadcastSignedNodeHealth(signed_node_healths.clone()))
 			.await
 		{
 			warn!("Unable to broadcast signed_node_healths to network_client_tx channel: {:?}", e)
@@ -160,8 +160,11 @@ impl<'a>  Consensus {
 			None => return Err(anyhow!("No block proposer for epoch {}", epoch).into()),
 		};
 		let mut signed_healths: Vec<NodeHealthPayload> = Vec::new();
+
+		log::debug!("DEBUG: Node address: {:?}, Block proposer address: {:?}", self.node_address, block_proposer.address);
 		if self.node_address == block_proposer.address {
 			let aggregated_health = NodeHealth::aggregate_network_health(std::mem::take(&mut self.node_health_reports));
+			log::debug!("DEBUG: Aggregated health: {:?}", aggregated_health);
 			for (_, health) in aggregated_health {
 				let json_str = serde_json::to_string(&health)?;
 				let message = Message::from_hashed_data::<sha256::Hash>(json_str.as_bytes());
@@ -172,11 +175,15 @@ impl<'a>  Consensus {
 					verifying_key: self.verifying_key.serialize().to_vec(),
 					sender: self.node_address,
 				};
+				log::debug!("DEBUG: Epoch: {:?}, Signed health: {:?}, Sender: {:?}", epoch, signed_health, self.node_address);
 				signed_healths.push(signed_health);
 				node_health_state.store_node_health(&health).await?;
 			}
+
+			log::debug!("DEBUG: Multinode mode: {:?}", self.multinode_mode);
 			if self.multinode_mode {
-				if let Err(e) = self.network_client_tx.send(BroadcastNetwork::BroadcastSignedNodeHealth(signed_healths, Some(epoch))).await {
+				log::debug!("DEBUG: Sending BroadcastNetwork::BroadcastSignedNodeHealth event to network_client_tx channel, epoch: {:?}, signed_healths: {:?}", epoch, signed_healths);
+				if let Err(e) = self.network_client_tx.send(BroadcastNetwork::BroadcastSignedNodeHealth(signed_healths)).await {
 					warn!("Failed to broadcast aggregated node health: {:?}", e);
 				}
 			}
@@ -460,6 +467,7 @@ impl<'a>  Consensus {
 	}
 
 	pub async fn handle_ping_result(&mut self, peer_id: String, is_success: bool, rtt: u64) {
+		log::debug!("DEBUG: Adding ping result for peer: {:?}, Is success: {:?}, RTT: {:?}", peer_id, is_success, rtt);
         self.real_time_checks.add_check(peer_id, is_success, rtt);
     }
 
@@ -469,6 +477,9 @@ impl<'a>  Consensus {
 
 	pub async fn process_health_update(&mut self, epoch: u64, db_pool_conn: &'a DbTxConn<'a>) -> Result<(), Error>{
 		// Find the maximum length in the vectors and resize all the reports with max length - 1
+
+		log::debug!("DEBUG: Real time checks > online_checks: {:?}", self.real_time_checks.online_checks.clone());
+		log::debug!("DEBUG: Real time checks > eligible_peers: {:?}", self.real_time_checks.eligible_peers.clone());
 		let max_length = match self.real_time_checks.online_checks.values().map(Vec::len).max() {
 			Some(len) if len > 1 => len,
 			_ => return Err(anyhow!("Insufficient data for processing for epoch: {}", epoch)),
@@ -488,6 +499,8 @@ impl<'a>  Consensus {
 			self.node_address,
 		);
 		let is_block_proposer = block_proposer_manager.is_block_proposer(block_proposer, db_pool_conn).await?;
+		log::debug!("DEBUG: Is block proposer: {:?}", is_block_proposer);
+		log::debug!("DEBUG: Real time checks: {:?}", self.real_time_checks.online_checks.clone());
 
 		for (measured_peer_id, _) in self.real_time_checks.online_checks.clone() {
 			let health_report = match self.real_time_checks.create_health_report(
@@ -502,6 +515,8 @@ impl<'a>  Consensus {
 					continue;
 				}
 			};
+
+			log::debug!("DEBUG: Health report: {:?}", health_report);
 
 			// Include health report into network health reports if node is a block proposer
 			if is_block_proposer {
