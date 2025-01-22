@@ -488,6 +488,13 @@ impl <'a> FullNode {
 			(full_node, mempool_res_rx)
 		} else {
 			info!("Starting archive node");
+			info!("Try to initialize runtime configs");
+			match try_initialize_runtime_configs(cluster_address).await {
+				Ok(_) => info!("Runtime configs initialized"),
+				Err(e) => error!("Failed to initialize runtime configs: {}", e),
+			}
+
+			
 			let full_node = FullNode {
 				ip_address: ip_address.clone(),
 				metadata: metadata.clone(),
@@ -664,6 +671,7 @@ impl <'a> FullNode {
 							}
 						},
 						Event::AggregateNodeHealth { epoch } => {
+							debug!("DEBUG: Sending Event::AggregateNodeHealth event to network_receive_tx channel, epoch: {}", epoch);
 							if let Err(e) = network_receive_tx
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::AggregateNodeHealth(epoch)))
 								.await
@@ -694,6 +702,9 @@ impl <'a> FullNode {
 							{
 								warn!("Unable to send check node status event: {:?}", e);
 							}
+						},
+						Event::InitializePeers => {
+							debug!("DEBUG: Received Event::InitializePeers event");
 						}
 					}
 				},
@@ -1111,8 +1122,8 @@ impl <'a> FullNode {
 						},
 					};
 				},
-				BroadcastNetwork::BroadcastSignedNodeHealth(aggregated_healths, epoch) => {
-					match network_client.aggregated_node_health_broadcast(aggregated_healths, epoch).await {
+				BroadcastNetwork::BroadcastSignedNodeHealth(aggregated_healths) => {
+					match network_client.aggregated_node_health_broadcast(aggregated_healths).await {
 						Ok(_) => {},
 						Err(e) => {
 							match e.to_string().as_str() {

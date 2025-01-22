@@ -48,6 +48,10 @@ pub fn block_timestamp_to_naive_datetime(ts: BlockTimeStamp) -> NaiveDateTime {
 }
 
 pub async fn wb_list_check(from_address: &Address, to_address: &Address) -> Result<(), Error> {
+	let is_config_loaded = runtime_config::RuntimeDenyConfigCache::is_initialized().await;
+
+	println!("is_config_loaded: {}", is_config_loaded);
+
 	let config = runtime_config::RuntimeDenyConfigCache::get().await?;
 	let whitelisted_addresses = &config.whitelisted_addresses;
 	let blacklisted_addresses= &config.blacklisted_addresses;
