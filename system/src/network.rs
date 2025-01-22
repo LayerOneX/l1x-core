@@ -21,7 +21,7 @@ pub enum BroadcastNetwork {
 	BroadcastVoteResult(VoteResult),
 	BroadcastQueryBlockRequest(QueryBlockMessage, PeerId),
 	BroadcastQueryBlockResponse(L1xResponse, ResponseChannel<L1xResponse>),
-	BroadcastSignedNodeHealth(Vec<NodeHealthPayload>, Option<Epoch>),
+	BroadcastSignedNodeHealth(Vec<NodeHealthPayload>),
 	BroadcastNodeHealth(Vec<NodeHealth>),
 	BroadcastQueryNodeStatusRequest(TimeStamp, PeerId),
 }

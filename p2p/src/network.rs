@@ -147,8 +147,18 @@ pub async fn new(
 
 	let (command_sender, command_receiver) = mpsc::channel(1000);
 	let (event_sender, event_receiver) = mpsc::channel(1000);
+	let client = Client { sender: command_sender, event_sender: event_sender.clone() };
+	
+	// Start peer discovery
+	match client.start_peer_discovery().await {
+		Ok(_) => {},
+		Err(e) => {
+			error!("Failed to start peer discovery: {:?}", e);
+		}
+	};
+	
 	Ok((
-		Client { sender: command_sender, event_sender: event_sender.clone() },
+		client,
 		event_receiver,
 		EventLoop::new(swarm, command_receiver, event_sender, dht_health_storage),
 	))
@@ -231,6 +241,8 @@ impl Client {
 
 				match block_state.is_block_executed(header.block_number, &cluster_address).await {
 					Ok(true) => {
+						log::debug!("DEBUG: Block is executed, processing node health for epoch: {}, last_processed_epoch: {:?}, block_number: {}", current_epoch.clone(), last_processed_epoch.clone(), header.block_number.clone());
+
 						// Process node health
 						if last_processed_epoch != Some(current_epoch) {
 							match block_manager.is_approaching_epoch_end(header.block_number, 5).await {
@@ -248,6 +260,7 @@ impl Client {
 							}
 						}
 
+						log::debug!("DEBUG: Last aggregated epoch: {:?}", last_aggregated_epoch.clone());
 						// Aggregate node health
 						if last_aggregated_epoch != Some(current_epoch) {
 							match block_manager.is_approaching_epoch_end(header.block_number, 10).await {
@@ -265,7 +278,10 @@ impl Client {
 							}
 						}
 					},
-					Ok(false) => continue,
+					Ok(false) => {
+						log::debug!("DEBUG: Block is not executed, skipping node health aggregation");
+						continue
+					},
 					Err(e) => {
 						log::warn!("Error checking if block is executed: {}", e);
 					}
@@ -290,6 +306,25 @@ impl Client {
 				}
 			}
 		});
+		Ok(())
+	}
+
+	pub async fn start_peer_discovery(&self) -> Result<(), Box<dyn Error + Send>> {
+		let sender = self.event_sender.clone();
+		
+		tokio::spawn(async move {
+			let mut interval = tokio::time::interval(Duration::from_secs(60)); // Adjust interval as needed
+			
+			loop {
+				interval.tick().await;
+				
+				// Send event to initialize/refresh peers
+				if let Err(e) = sender.send(Event::InitializePeers).await {
+					error!("Failed to send InitializePeers event: {}", e);
+				}
+			}
+		});
+		
 		Ok(())
 	}
 }
@@ -373,10 +408,10 @@ impl NodeHealthBroadcast for Client {
 #[async_trait]
 impl AggregatedNodeHealthBroadcast for Client {
 	/// Command the node to broadcast node health to the p2p network.
-	async fn aggregated_node_health_broadcast(&self, node_health_payloads: Vec<NodeHealthPayload>, epoch: Option<Epoch>) -> Result<MessageId, Box<dyn Error + Send>> {
+	async fn aggregated_node_health_broadcast(&self, node_health_payloads: Vec<NodeHealthPayload>) -> Result<MessageId, Box<dyn Error + Send>> {
 		let (sender, receiver) = oneshot::channel();
 		self.sender
-			.send(Command::BroadcastNodeHealthPayload { node_health_payloads, sender, epoch })
+			.send(Command::BroadcastNodeHealthPayload { node_health_payloads, sender })
 			.await
 			.unwrap_or_else(|e| {
 				error!(
@@ -668,6 +703,24 @@ impl EventLoop {
 						QueryResult::Bootstrap(result) => match result {
 							Ok(res) => {
 								info!("BOOTSTRAP SUCCESS: {res:?}");
+								// Initialize peers after successful bootstrap
+								let mut peer_ids: Vec<String> = Vec::new();
+								for bucket in self.swarm.behaviour_mut().kademlia.kbuckets() {
+									for entry in bucket.iter() {
+										let peer_id = entry.node.key.clone().into_preimage();
+										peer_ids.push(peer_id.to_string());
+									}
+								}
+								
+								if !peer_ids.is_empty() {
+									let _ = self.event_sender
+										.send(Event::PingEligiblePeers {
+											epoch: 0, // Or determine current epoch
+											peer_ids
+										})
+										.await
+										.unwrap_or_else(|e| error!("Failed to send PingEligiblePeers event: {:?}", e));
+								}
 							},
 							Err(e) => {
 								error!("BOOTSTRAP FAILURE: {e:?}");
@@ -676,6 +729,8 @@ impl EventLoop {
 						QueryResult::GetClosestPeers(result) => match result {
 							Ok(res) => {
 								let mut futures = FuturesUnordered::new();
+								let closest_peers = res.peers.clone();
+
 								for peer_id in res.peers.iter().take(5) { // Connect to up to 5 peers
 									let addrs = self.swarm.behaviour_mut().kademlia.addresses_of_peer(peer_id)
 										.into_iter()
@@ -700,6 +755,21 @@ impl EventLoop {
 										Err(e) => debug!("Failed to receive result for peer: {peer_id:}, error: {e:}"),
 									}
 								}
+
+								let mut peer_ids: Vec<String> = Vec::new();
+								for peer_id in closest_peers {
+									peer_ids.push(peer_id.to_string());
+								}
+								
+								if !peer_ids.is_empty() {
+									let _ = self.event_sender
+										.send(Event::PingEligiblePeers {
+											epoch: 0, // Or determine current epoch
+											peer_ids
+										})
+										.await
+										.unwrap_or_else(|e| error!("Failed to send PingEligiblePeers event: {:?}", e));
+								}		
 							}
 							Err(e) => {
 								warn!("GetClosestPeers query failed: {:?}", e);
@@ -1019,6 +1089,7 @@ impl EventLoop {
 								L1xResponse::QueryNodeStatus(peer_id, request_time) => {
 									if let Ok(current_timestamp) = util::generic::current_timestamp_in_millis() {
 										let response_time = current_timestamp - request_time;
+										log::debug!("DEBUG: Sending Event::PingResult event to event_sender channel, peer_id: {:?}, is_success: {:?}, rtt: {:?}", peer_id, true, response_time as u64);
 										self.event_sender.send(Event::PingResult {
 											peer_id: peer_id,
 											is_success: true,
@@ -1230,8 +1301,32 @@ impl EventLoop {
 						let _ = sender.send(Err(e.into()));
 					},
 				}
+
+				// Initialize eligible peers for ping results
+				// let mut peer_ids: Vec<String> = Vec::new();
+				// for bucket in self.swarm.behaviour_mut().kademlia.kbuckets() {
+				// 	for entry in bucket.iter() {
+				// 		let peer_id = entry.node.key.clone().into_preimage(); // Extract the PeerId
+				// 		peer_ids.push(peer_id.to_string());
+				// 	}
+				// }
+				// if let Some(epoch) = node_healths.first().map(|node_health| node_health.epoch) {
+				// 	let _ = self
+				// 		.event_sender
+				// 		.send(Event::PingEligiblePeers {
+				// 			epoch: epoch + 1, // Setting peer_ids for next epoch
+				// 			peer_ids
+				// 		})
+				// 		.await
+				// 		.unwrap_or_else(|e| {
+				// 			error!(
+				// 			"Failed to send PingEligiblePeers event: {:?}",
+				// 			e
+				// 		)
+				// 		});
+				// }
 			},
-            Command::BroadcastNodeHealthPayload { node_health_payloads, sender, epoch } => match serialize_as_versioned_message(node_health_payloads) {
+            Command::BroadcastNodeHealthPayload { node_health_payloads, sender } => match serialize_as_versioned_message(node_health_payloads) {
 				Ok(health) => {
 					match self.swarm.behaviour_mut().gossipsub.publish(
 						gossipsub::IdentTopic::new(AGGREGATED_NODE_HEALTH_TOPIC),
@@ -1245,31 +1340,6 @@ impl EventLoop {
 							// error!("FAILED TO PUBLISH NODE HEALTH PAYLOAD");
 							let _ = sender.send(Err(Box::new(e)));
 						},
-					}
-
-					// Initialize eligible peers for ping results
-					let mut peer_ids: Vec<String> = Vec::new();
-					for bucket in self.swarm.behaviour_mut().kademlia.kbuckets() {
-						for entry in bucket.iter() {
-							let peer_id = entry.node.key.clone().into_preimage(); // Extract the PeerId
-							peer_ids.push(peer_id.to_string());
-						}
-					}
-
-					if let Some(epoch) = epoch {
-						let _ = self
-							.event_sender
-							.send(Event::PingEligiblePeers {
-								epoch: epoch + 1, // Setting peer_ids for next epoch
-								peer_ids
-							})
-							.await
-							.unwrap_or_else(|e| {
-								error!(
-							"Failed to send PingEligiblePeers event: {:?}",
-							e
-						)
-							});
 					}
 				},
 				Err(e) => {
@@ -1578,7 +1648,6 @@ pub enum Command {
    BroadcastNodeHealthPayload {
 		node_health_payloads: Vec<NodeHealthPayload>,
         sender: oneshot::Sender<Result<MessageId, Box<dyn Error + Send>>>,
-		epoch: Option<Epoch>,
     },
 	/// Queryblock to the network
 	QueryStatusRequest {
@@ -1608,6 +1677,7 @@ pub enum Event {
 	PingResult { peer_id: String, is_success: bool, rtt: u64 },
 	PingEligiblePeers { epoch: Epoch, peer_ids: Vec<String> },
 	CheckNodeStatus,
+	InitializePeers,
 }
 
 /// Given a human-readable topic name, return the topic hash

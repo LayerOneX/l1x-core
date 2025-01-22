@@ -266,6 +266,5 @@ pub trait AggregatedNodeHealthBroadcast {
 	async fn aggregated_node_health_broadcast(
 		&self,
 		node_health_payloads: Vec<NodeHealthPayload>,
-		epoch: Option<Epoch>,
 	) -> Result<MessageId, Box<dyn Error + Send>>;
 }
