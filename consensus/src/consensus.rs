@@ -639,7 +639,13 @@ impl<'a>  Consensus {
 					continue;
 				}
 			};
+
+			info!("DEBUB::TMP_27012025: Broadcasting query node status request to peer: {:?}", peer_id.clone());
+
 			if let Ok(request_time) = util::generic::current_timestamp_in_millis() {
+
+				info!("DEBUG_27012025: request_time: {:?}", request_time.clone());
+				
 				if let Err(e) = self
 					.network_client_tx
 					.send(BroadcastNetwork::BroadcastQueryNodeStatusRequest(request_time, peer_id)).await

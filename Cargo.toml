@@ -55,7 +55,7 @@ members = [
 ]
 
 [workspace.package]
-version = "2.4.2"
+version = "2.4.3"
 license = "Polyform-Perimeter-1.0.0"
 
 [workspace.dependencies]
