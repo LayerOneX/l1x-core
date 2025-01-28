@@ -1,5 +1,5 @@
 use std::{cell::RefCell, collections::HashMap};
-
+use log::info;
 use anyhow::{anyhow, Error};
 use db::db::DbTxConn;
 use primitives::{
@@ -600,16 +600,26 @@ impl UpdatedState {
 		amount: Balance,
 	) -> Result<(), Error> {
 		let mut from_account = self.get_account(from_address)?;
+
+		info!("DEBUB::TMP_27012025: BEFORE Transfer: from_account.balance: {}, amount: {}", from_account.clone().balance, amount.clone());
 		from_account.balance = from_account.balance.checked_sub(amount).ok_or(anyhow!(
 			"Transfer: Can't decrease balance, account: {}, balance: {}, required balance: {}",
 			hex::encode(from_address),
 			from_account.balance,
 			amount
 		))?;
+		info!("DEBUB::TMP_27012025: AFTER Transfer: from_account.balance: {}, amount: {}", from_account.clone().balance, amount.clone());
 		
 		// Get an account or create a new one
 		let mut to_account = match self.get_account(to_address) {
-			Ok(account) => account,
+			Ok(account) => {
+				if(from_address == to_address) {
+					from_account.clone()
+				}
+				else{
+					account
+				}
+			},
 			Err(_) => {
 				let account = Account {
 					address: *to_address,
@@ -621,13 +631,14 @@ impl UpdatedState {
 				account
 			}
 		};
+		info!("DEBUB::TMP_27012025: BEFORE Transfer: to_account.balance: {}, amount: {}", to_account.clone().balance, amount.clone());
 		to_account.balance = to_account.balance.checked_add(amount).ok_or(anyhow!(
 			"Transfer: balance overflow, account: {}, balance: {}, amount: {}",
 			hex::encode(to_address),
 			to_account.balance,
 			amount
 		))?;
-
+		info!("DEBUB::TMP_27012025: AFTER Transfer: to_account.balance: {}, amount: {}", to_account.clone().balance, amount.clone());
 		self.update_account(&from_account).map_err(|e| {
 			anyhow!("Can't update 'from' account {}, error: {}", hex::encode(&from_address), e)
 		})?;
