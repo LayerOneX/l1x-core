@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use account::account_state::AccountState;
 use anyhow::{anyhow, Error, Result};
-use log::{info, warn};
+use log::{info, warn, debug};
 use primitives::*;
 use secp256k1::{hashes::sha256, Message, PublicKey, SecretKey};
 use staking::staking_state::StakingState;
@@ -10,6 +10,26 @@ use system::{network::BroadcastNetwork, validator::Validator, vote::Vote, vote_r
 use db::db::DbTxConn;
 use system::vote_result::VoteResultSignPayload;
 use tokio::sync::mpsc;
+use std::collections::HashSet;
+use runtime_config::{RuntimeConfigCache, RuntimeStakingInfoCache};
+use std::sync::Arc;
+
+const VOTE_THRESHOLD: f64 = 0.6; // 60%
+const STAKE_PASS_THRESHOLD: f64 = 0.5;
+
+/// Returns the minimum number of votes required, based on a configurable threshold.
+/// 
+/// # Arguments
+/// * `validators_count` - The total number of validators
+/// * `threshold_percent` - The fraction (0.0 to 1.0) of validators needed
+///
+/// # Example
+/// ```
+/// let min_votes = calculate_min_votes(10, 0.7); // ~7
+/// ```
+fn calculate_min_votes(validators_count: usize, threshold_percent: f64) -> usize {
+	(validators_count as f64 * threshold_percent).ceil() as usize
+}
 
 pub struct VoteResultManager {
 	pub network_client_tx: mpsc::Sender<BroadcastNetwork>,
@@ -45,6 +65,10 @@ impl<'a> VoteResultManager {
 			pool_account
 		};
 		let pool_balance = pool_account.balance;
+		debug!("vote_result ~ Pool balance: {:?}", pool_balance);
+
+		// Validator Address hex encode
+		debug!("vote_result ~ Validator address: {:?}", hex::encode(validator_address));
 
 		let mut voting_string = format!("Vote info for block #{}\n", block_number);
 		voting_string.push_str(&format!("\tPool balance: {}\n", pool_balance));
@@ -58,7 +82,11 @@ impl<'a> VoteResultManager {
 			let votes = all_votes_hashmap;
 			// Calculate the minimum number of votes required (70% of validators)
 			// let min_votes = (validators.len() as f64 * 0.7) as usize;
-			let min_votes = 1;
+			let min_votes = calculate_min_votes(validators.len(), VOTE_THRESHOLD);
+			debug!("vote_result ~ Min votes: {:?}", min_votes);
+			debug!("vote_result ~ Votes length: {:?}", votes.len());
+			debug!("vote_result ~ VOTE_THRESHOLD: {:?}", VOTE_THRESHOLD);
+
 
 			// Check if the number of votes is less than the required minimum
 			// We assume 30% of validators will be unresponsive or not available
@@ -67,6 +95,7 @@ impl<'a> VoteResultManager {
 			}
 			let total_favoured_stake = futures::future::join_all(votes.iter().map(
 				|(validator_address, &vote)| async move {
+					debug!("vote_result ~ total_favoured_stake ~ Validator address: {:?}, Vote: {:?}", hex::encode(validator_address), vote);
 					if vote {
 						let staking_state = StakingState::new(db_pool_conn)
 							.await
@@ -77,11 +106,11 @@ impl<'a> VoteResultManager {
 
 						match stake_result {
 							Ok(stake) => {
-								println!("Stake result: {}", stake);
+								debug!("vote_result ~ total_favoured_stake ~ Validator address: {:?}, Stake result: {}", hex::encode(validator_address), stake);
 								stake.balance as f64
 							},
 							Err(err) => {
-								warn!("Error fetching stake: {:?}", err);
+								warn!("vote_result ~ total_favoured_stake ~ Error fetching stake: {:?}, for validator address: {:?}, pool address: {:?}", err, hex::encode(validator_address), hex::encode(pool_address));
 								0.0
 							},
 						}
@@ -94,16 +123,50 @@ impl<'a> VoteResultManager {
 			.into_iter()
 			.sum::<f64>();
 
+			let total_voted_stake = futures::future::join_all(votes.iter().map(
+				|(validator_address, _)| async move {
+					let staking_state = StakingState::new(db_pool_conn)
+						.await
+						.expect("error getting staking state conn");
+					debug!("vote_result ~ total_voted_stake ~ Validator address: {:?}", hex::encode(validator_address));
+					match staking_state
+						.get_staking_account(validator_address, pool_address)
+						.await
+					{
+						Ok(stake) => stake.balance as f64,
+						Err(err) => {
+							warn!("vote_result ~ total_voted_stake ~ Error fetching stake: {:?}, for validator address: {:?}, pool address: {:?}", err, hex::encode(validator_address), hex::encode(pool_address));
+							0.0
+						},
+					}
+				},
+			))
+			.await
+			.into_iter()
+			.sum::<f64>();
+
+			debug!("vote_result ~ total_voted_stake: {:?}", total_voted_stake);
+			debug!("vote_result ~ total_favoured_stake: {:?}", total_favoured_stake);
+			let stake_ratio = if total_voted_stake > 0.0 {
+				total_favoured_stake / total_voted_stake
+			} else {
+				0.0
+			};
+
 			// println!("TOTAL FAVOURED STAKE: {:?}", total_favoured_stake);
-			voting_string.push_str(&format!("\tTotal favoured stake: {}\n", total_favoured_stake));
+			voting_string.push_str(&format!(
+				"\tTotal voted stake: {}\n\tFavoured stake ratio: {:.2}\n",
+				total_favoured_stake, stake_ratio
+			));
 
 			// If 50% of the vote is in favour of the block, the block is accepted
 			// let vote_passed = (total_favoured_stake / pool_balance as f64) > 0.5;
-			let vote_passed = total_favoured_stake > 0.0;
+			let vote_passed = stake_ratio > STAKE_PASS_THRESHOLD;
+			debug!("vote_result ~ Vote passed: {:?} for block #{}, STAKE_PASS_THRESHOLD: {:?}", vote_passed, block_number, STAKE_PASS_THRESHOLD);
 			// info!("VOTE PASSED for block #{}? {:?}", block_number, vote_passed);
 			voting_string.push_str(&format!("\t❔VOTE PASSED? {}\n", vote_passed));
 
-			info!("{}", voting_string);
+			info!("vote_result ~ voting_string: {}", voting_string);
 
 			let vote_result_sign_payload = VoteResultSignPayload::new(
 				block_number,
@@ -130,6 +193,12 @@ impl<'a> VoteResultManager {
 				all_votes,
 			);
 
+			debug!("vote_result ~ Vote result: {:?}", vote_result);
+			// Iterate Validator Address to hex::encode
+			for v in vote_result.clone().data.votes {
+				debug!("vote_result ~ Vote result ~ Validator address: {:?}", hex::encode(v.validator_address));
+			}
+
 			// {
 			// 	let vote_result_state = VoteResultState::new(db_pool_conn).await?;
 			// 	vote_result_state.store_vote_result(&vote_result).await?;
@@ -150,7 +219,7 @@ impl<'a> VoteResultManager {
 		}
 	}
 
-	pub fn try_to_generate_vote_result(
+	pub async fn try_to_generate_vote_result(
 		block_number: BlockNumber,
 		block_hash: BlockHash,
 		cluster_address: Address,
@@ -159,30 +228,34 @@ impl<'a> VoteResultManager {
 		verifying_key: &PublicKey,
 		block_proposer_address: Address,
 		validators: Vec<Validator>,
+		db_pool_conn: &'a DbTxConn<'a>,
+		pool_address: &Address,
 	) -> Result<Option<VoteResult>, Error> {
 		let mut validator_print = String::new();
 		for v in validators.clone() { 
 			let s = format!("\t{}\n", hex::encode(v.address));
+			debug!("try_to_generate_vote_result ~ Validator Address: {:?}", s);
 			validator_print.push_str(&s);
 		}
 		// println!("SELECTED {} VALIDATORS for block {}: \n{}", selected_validators.len(),
 		// block_number, validator_print);
 		info!("VALIDATORS LOADED for block #{}: \n{}", block_number, validator_print);
+		debug!("try_to_generate_vote_result ~ pool_address: {:?}", hex::encode(pool_address));
 		
 		let unique_votes = Self::get_unique_votes(&all_votes);
 		if !unique_votes.is_empty() {
 			// If 50% of the vote is in favour of the block, the block is accepted
 			// let vote_passed = (total_favoured_stake / pool_balance as f64) > 0.5;
-			let min_votes = (validators.len() as f64 * 0.6).round() as usize;
+			let min_votes = calculate_min_votes(validators.len(), VOTE_THRESHOLD);
 			// Check if the number of votes is less than the required minimum
 			// We assume 30% of validators will be unresponsive or not available
-			info!("Min vote required #{}: total votes received{}", min_votes, unique_votes.len());
+			info!("try_to_generate_vote_result ~ Min vote required #{}: total votes received #{}:", min_votes, unique_votes.len());
 			if unique_votes.len() < min_votes {
 				return Ok(None)
 			}
 
-			let vote_passed = Self::is_passed(&unique_votes, validators, min_votes);
-
+			let vote_passed = Self::is_passed(&unique_votes, validators, min_votes).await?;
+			debug!("try_to_generate_vote_result ~ Vote passed: {:?} for block #{}", vote_passed, block_number);
 			// Waiting for 60% up votes for this block
 			if !vote_passed {
 				return Ok(None)
@@ -221,6 +294,13 @@ impl<'a> VoteResultManager {
 				unique_votes,
 			);
 
+
+			debug!("try_to_generate_vote_result ~ Vote result: {:?}", vote_result);
+			// Iterate Validator Address to hex::encode
+			for v in vote_result.clone().data.votes {
+				debug!("try_to_generate_vote_result ~ Vote result ~ Validator address: {:?}", hex::encode(v.validator_address));
+			}
+
 			return Ok(Some(vote_result))
 		} else {
 			return Err(anyhow!("No votes found for the block_hash"))
@@ -228,30 +308,105 @@ impl<'a> VoteResultManager {
 	}
 
 	fn get_unique_votes(votes: &Vec<Vote>) -> Vec<Vote> {
+		debug!("get_unique_votes ~ Votes Length: {:?}", votes.len());
 		let mut unique_votes = HashMap::with_capacity(votes.len());
 		votes.iter().for_each(|vote| {
+			debug!("get_unique_votes ~ Vote ~ Validator address: {:?}", hex::encode(vote.validator_address));
 			unique_votes.insert(&vote.verifying_key, vote);
 		});
 		
 		unique_votes.into_iter().map(|(_, vote)| vote.clone()).collect::<Vec<Vote>>()
 	}
 
-	fn is_passed(all_votes: &Vec<Vote>, validators: Vec<Validator>, min_passed_votes: usize) -> bool {
-		let mut address_validators = Vec::new();
-		for validator in validators {
-			address_validators.push(validator.address);
-		};
-		let passed_votes_count = all_votes
-			.iter()
-			.filter(|vote| address_validators.contains(&vote.validator_address) && vote.data.vote)
-			.count();
+	// fn is_passed(all_votes: &Vec<Vote>, validators: Vec<Validator>, min_passed_votes: usize) -> bool {
+	// 	let mut address_validators = Vec::new();
+	// 	for validator in validators {
+	// 		address_validators.push(validator.address);
+	// 	};
+	// 	let passed_votes_count = all_votes
+	// 		.iter()
+	// 		.filter(|vote| address_validators.contains(&vote.validator_address) && vote.data.vote)
+	// 		.count();
 
-		passed_votes_count >= min_passed_votes
+	// 	passed_votes_count >= min_passed_votes
+	// }
+
+	async fn is_passed(
+		all_votes: &Vec<Vote>, 
+		validators: Vec<Validator>,
+		min_participation_count: usize
+	) -> Result<bool, Error> {
+		
+		// Get runtime config and stacking info for all nodes
+		let rt_config:Arc<RuntimeConfigCache> = RuntimeConfigCache::get().await?;
+		let stacking_info:Arc<RuntimeStakingInfoCache> = RuntimeStakingInfoCache::get().await?;
+		let min_stake_amount = rt_config.stake_score.min_balance;
+
+		// 1. Filter to only votes from valid validators
+		let validator_addresses: HashSet<Address> =
+			validators.iter().map(|v| v.address).collect();
+	
+		let valid_votes: Vec<&Vote> = all_votes
+			.iter()
+			.filter(|vote| validator_addresses.contains(&vote.validator_address))
+			.collect();
+	
+		// 2. Check if we have enough votes by count (participation threshold)
+		if valid_votes.len() < min_participation_count {
+			return Ok(false);
+		}
+	
+		// Enhanced stake retrieval with multiple fallback mechanisms
+		let get_validator_stake = |validator_address: &Address| -> f64 {
+			debug!("is_passed ~ Resolving stake for {}", hex::encode(validator_address));
+			
+			// Org nodes always get minimum stake
+			if rt_config.org_nodes.contains(validator_address) {
+				debug!("is_passed ~ Org node with minimum stake: {}", min_stake_amount);
+				return min_stake_amount as f64;
+			}
+			
+			// For non-org nodes, check actual stake balance
+			match stacking_info.nodes.get(validator_address) {
+				Some(stake) if stake.staked_balance >= min_stake_amount => {
+					debug!("is_passed ~ Valid stake: {} for node", stake.staked_balance);
+					stake.staked_balance as f64
+				},
+				Some(stake) => {
+					debug!("is_passed ~ Stake below minimum: {} < {}", stake.staked_balance, min_stake_amount);
+					0.0  // Exclude nodes with insufficient stake
+				},
+				None => {
+					debug!("is_passed ~ No stake found for non-org node");
+					0.0  // Exclude nodes with no stake info
+				}
+			}
+		};
+	
+		let (total_voted_stake, total_yes_stake) = valid_votes.iter().fold(
+			(0.0, 0.0),
+			|(total, yes), vote| {
+				let stake = get_validator_stake(&vote.validator_address);
+				(total + stake, yes + if vote.data.vote { stake } else { 0.0 })
+			},
+		);
+	
+		// Safer float comparison
+		let ratio = if total_voted_stake > 0.0 {
+			total_yes_stake / total_voted_stake
+		} else {
+			0.0
+		};
+		
+		Ok(ratio > STAKE_PASS_THRESHOLD - f64::EPSILON)
 	}
 
-	pub fn is_vote_result_passed(vote_result: &VoteResult, validators: Vec<Validator>) -> bool {
+	pub async fn is_vote_result_passed(
+		vote_result: &VoteResult, 
+		validators: Vec<Validator>
+	) -> Result<bool, Error> {
 		let unique_votes = Self::get_unique_votes(&vote_result.data.votes);
-		let min_passed_votes = (validators.len() as f64 * 0.6) as usize;
-		Self::is_passed(&unique_votes, validators, min_passed_votes)
+		let min_passed_votes = (validators.len() as f64 * VOTE_THRESHOLD) as usize;
+		Self::is_passed(&unique_votes, validators, min_passed_votes).await
 	}
 }

@@ -601,14 +601,12 @@ impl UpdatedState {
 	) -> Result<(), Error> {
 		let mut from_account = self.get_account(from_address)?;
 
-		info!("DEBUB::TMP_27012025: BEFORE Transfer: from_account.balance: {}, amount: {}", from_account.clone().balance, amount.clone());
 		from_account.balance = from_account.balance.checked_sub(amount).ok_or(anyhow!(
 			"Transfer: Can't decrease balance, account: {}, balance: {}, required balance: {}",
 			hex::encode(from_address),
 			from_account.balance,
 			amount
 		))?;
-		info!("DEBUB::TMP_27012025: AFTER Transfer: from_account.balance: {}, amount: {}", from_account.clone().balance, amount.clone());
 		
 		// Get an account or create a new one
 		let mut to_account = match self.get_account(to_address) {
@@ -631,14 +629,12 @@ impl UpdatedState {
 				account
 			}
 		};
-		info!("DEBUB::TMP_27012025: BEFORE Transfer: to_account.balance: {}, amount: {}", to_account.clone().balance, amount.clone());
 		to_account.balance = to_account.balance.checked_add(amount).ok_or(anyhow!(
 			"Transfer: balance overflow, account: {}, balance: {}, amount: {}",
 			hex::encode(to_address),
 			to_account.balance,
 			amount
 		))?;
-		info!("DEBUB::TMP_27012025: AFTER Transfer: to_account.balance: {}, amount: {}", to_account.clone().balance, amount.clone());
 		self.update_account(&from_account).map_err(|e| {
 			anyhow!("Can't update 'from' account {}, error: {}", hex::encode(&from_address), e)
 		})?;
@@ -1067,15 +1063,34 @@ impl UpdatedState {
 		block_number: BlockNumber,
 		amount: Balance,
 	) -> Result<(), Error> {
+		let pool = self.get_staking_pool(pool_address)?;
 		let mut staking_account = self.get_staking_account(account_address, pool_address)?;
-		staking_account.balance = staking_account.balance.checked_sub(amount)
+		
+		// Check if the remaining balance is less than the min stake
+		let remaining_balance = staking_account.balance.checked_sub(amount)
 			.ok_or(anyhow!("Unstake: no enough fund to unstake, account: {}, staked amount: {}, amount: {}", 
 				hex::encode(account_address), staking_account.balance, amount))?;
+		
+		// If there's a minimum stake, check if the remaining balance is less than the min stake
+		let mut adjusted_amount = amount;
+		if let Some(min_stake) = pool.min_stake {
+			if remaining_balance > 0 && remaining_balance < min_stake {
+				info!("Unstake: remaining balance {} below min_stake {}, withdrawing full amount", 
+                remaining_balance, min_stake);
 
+				adjusted_amount = staking_account.balance;
+				staking_account.balance = 0;
+			}
+		}
+
+		if adjusted_amount == amount {
+			staking_account.balance = remaining_balance;
+		}
+		
 		self.update_staking_account(&staking_account)?;
 		self.update_staking_pool_block_number(pool_address, block_number)?;
 		
-		self.transfer(pool_address, account_address, amount)?;
+		self.transfer(pool_address, account_address, adjusted_amount)?;
 		
 		Ok(())
 	}

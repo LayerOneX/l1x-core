@@ -111,7 +111,8 @@ pub struct Config {
 	pub cluster_address: String,
 	pub validator_pool_address: String,
 	pub boot_nodes: Vec<String>, // eg. &["/ip4/0.0.0.0/tcp/5010/p2p/1234567890"]
-	pub archive_nodes: Vec<String>,
+	pub archive_nodes: Vec<String>, // DEPRECATED
+	pub archive_snapshot_sources: Vec<String>,
 	pub archive_public_key: String,
 	pub sync_node_time_interval: u64,
 	pub snapshot_time_interval: u64,
@@ -164,6 +165,7 @@ impl Default for Config {
 			cluster_address: default_config.cluster_address,
 			boot_nodes: default_config.boot_nodes,
 			archive_nodes: default_config.archive_nodes,
+			archive_snapshot_sources: default_config.archive_snapshot_sources,
 			archive_public_key: default_config.archive_public_key,
 			sync_node_time_interval: default_config.sync_node_time_interval,
 			snapshot_time_interval: default_config.snapshot_time_interval,

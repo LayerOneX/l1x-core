@@ -22,6 +22,7 @@ impl BaseState<Vote> for StateCas {
                     signature blob,
                     verifying_key blob,
                     vote boolean,
+					epoch Bigint,
                     PRIMARY KEY (block_hash, validator_address)
                 );",
 				&[],
@@ -34,11 +35,13 @@ impl BaseState<Vote> for StateCas {
 
 	async fn create(&self, vote: &Vote) -> Result<(), Error> {
 		let block_number: i64 = i64::try_from(vote.data.block_number).unwrap_or(i64::MAX);
+		let epoch: i64 = i64::try_from(vote.data.epoch).unwrap_or(i64::MAX);
+
 		self
 			.session
 			.query(
-				"INSERT INTO vote (block_number, block_hash, cluster_address, validator_address, signature, verifying_key, vote) VALUES (?,?,?,?,?,?,?);",
-				(&block_number, &vote.data.block_hash, &vote.data.cluster_address, &vote.validator_address, &vote.signature, &vote.verifying_key, &vote.data.vote),
+				"INSERT INTO vote (block_number, block_hash, cluster_address, validator_address, signature, verifying_key, vote, epoch) VALUES (?,?,?,?,?,?,?,?);",
+				(&block_number, &vote.data.block_hash, &vote.data.cluster_address, &vote.validator_address, &vote.signature, &vote.verifying_key, &vote.data.vote, &epoch),
 			)
 			.await
 			.with_context(|| "Failed to store vote data")?;

@@ -35,8 +35,8 @@ impl<'a> BlockProposerManager {
 		block_proposer_state
 			.store_block_proposers(
 				&cluster_block_proposers,
-				None,
-				None,
+				Some(selected_address),
+				Some(block_header.cluster_address),
 			).await?;
 	
 		Ok(selected_address)
