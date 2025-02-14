@@ -1,0 +1,113 @@
+diff --git a/p2p/src/network.rs b/p2p/src/network.rs
+index bca5434c..5a6fb504 100644
+--- a/p2p/src/network.rs
++++ b/p2p/src/network.rs
+@@ -684,8 +684,39 @@ impl EventLoop {
+ 	}
+ 
+ 	
+-	
++	async fn add_active_peer(&mut self, peer_id: PeerId) -> Result<(), anyhow::Error> {
++		let mut peers = match ACTIVE_PEERS.lock() {
++			Ok(peers) => peers,
++			Err(e) => {
++				error!("Failed to lock ACTIVE_PEERS: {:?}", e);
++				return Err(anyhow!("Failed to lock ACTIVE_PEERS"));
++			}
++		};
++
++		if !peers.contains(&peer_id) {
++			peers.push(peer_id);
++		}
++
++		Ok(())
++	}
++
++	async fn remove_active_peer(&mut self, peer_id: PeerId) -> Result<(), anyhow::Error> {
++		let mut peers = match ACTIVE_PEERS.lock() {
++			Ok(peers) => peers,
++			Err(e) => {
++				error!("Failed to lock ACTIVE_PEERS: {:?}", e);
++				return Err(anyhow!("Failed to lock ACTIVE_PEERS"));
++			}
++		};
+ 
++		let peer_to_remove = peers.iter().position(|id| id == &peer_id);
++		if let Some(index) = peer_to_remove {
++			peers.remove(index);
++		}
++	
++		Ok(())
++	}
++	
+ 	/// Handles events received from the p2p network. This can result in anything from logging some
+ 	/// info to sending a transaction for mempool validation.
+ 	async fn handle_event(
+@@ -709,20 +740,11 @@ impl EventLoop {
+ 					}
+ 
+ 					debug!("ConnectionEstablished ~ Peer ID: {:?}", peer_id);
+-					// Update the active peers to lazy static ACTIVE_PEERS
+-					let mut peers = match ACTIVE_PEERS.lock() {
+-						Ok(peers) => peers,
+-						Err(e) => {
+-							error!("handle_event ~ ConnectionEstablished ~ Failed to lock ACTIVE_PEERS: {:?}", e);
+-							return;
+-						}
+-					};
+-
+-					debug!("ConnectionEstablished ~ Peers: {:?}", peers);
+ 
+-					// Remove duplicate peers
+-					if !peers.contains(&peer_id) {
+-						peers.push(peer_id);
++					// Update the active peers to lazy static ACTIVE_PEERS
++					match self.add_active_peer(peer_id).await {
++						Ok(_) => debug!("ConnectionEstablished ~ Peer ID: {:?} added to ACTIVE_PEERS", peer_id),
++						Err(e) => error!("ConnectionEstablished ~ Peer ID: {:?} failed to add to ACTIVE_PEERS: {:?}", peer_id, e),
+ 					}
+ 					
+ 
+@@ -736,17 +758,10 @@ impl EventLoop {
+ 				self.handle_peer_disconnection(peer_id).await;
+ 
+ 				debug!("ConnectionClosed ~ Peer ID: {:?}", peer_id);
+-				// Remove it from the active peers
+-				let mut peers = match ACTIVE_PEERS.lock() {
+-					Ok(peers) => peers,
+-					Err(e) => {
+-						error!("handle_event ~ ConnectionClosed ~ Failed to lock ACTIVE_PEERS: {:?}", e);
+-						return;
+-					}
+-				};
+-				let peer_to_remove = peers.iter().position(|id| id == &peer_id);
+-				if let Some(index) = peer_to_remove {
+-					peers.remove(index);
++				
++				match self.remove_active_peer(peer_id).await {
++					Ok(_) => debug!("ConnectionClosed ~ Peer ID: {:?} removed from ACTIVE_PEERS", peer_id),
++					Err(e) => error!("ConnectionClosed ~ Peer ID: {:?} failed to remove from ACTIVE_PEERS: {:?}", peer_id, e),
+ 				}
+ 			},
+ 			SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+@@ -862,10 +877,18 @@ impl EventLoop {
+ 				},
+ 				BehaviourEvent::Gossipsub(event) => match event {
+ 					gossipsub::Event::Subscribed { peer_id, topic } => {
+-						info!("Peer: {peer_id:?} subscribed to '{topic:?}'",)
++						info!("Peer: {peer_id:?} subscribed to '{topic:?}'");
++						match self.add_active_peer(peer_id).await {
++							Ok(_) => debug!("Peer: {peer_id:?} added to ACTIVE_PEERS"),
++							Err(e) => error!("Peer: {peer_id:?} failed to add to ACTIVE_PEERS: {:?}", e),
++						}
+ 					},
+ 					gossipsub::Event::Unsubscribed { peer_id, topic } => {
+-						info!("Peer: {peer_id:?} unsubscribed from '{topic:?}'",)
++						info!("Peer: {peer_id:?} unsubscribed from '{topic:?}'");
++						match self.remove_active_peer(peer_id).await {
++							Ok(_) => debug!("Peer: {peer_id:?} removed from ACTIVE_PEERS"),
++							Err(e) => error!("Peer: {peer_id:?} failed to remove from ACTIVE_PEERS: {:?}", e),
++						}
+ 					},
+ 					gossipsub::Event::Message {
+ 						propagation_source: peer_id,

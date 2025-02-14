@@ -5,7 +5,6 @@ use db::{
 	db::DbTxConn,
 	utils::big_int::{FromBigInt, ToBigInt},
 };
-use num_traits::Zero;
 use primitives::*;
 use system::{account::Account, staking_pool::StakingPool};
 
@@ -82,6 +81,10 @@ impl<'a> StakingManager {
 			return Err(anyhow!(msg))
 		}
 
+		// Commented following in favor of : Hashlock Audit [M-04] staking_manager#stake - Some validators can face DoS when trying to
+		// unstake due to the min pool balance condition
+		
+		/*
 		let value_after_un_stake = staking_pool_balance
 			.get_big_int()
 			.checked_sub(&amount.get_big_int())
@@ -99,6 +102,7 @@ impl<'a> StakingManager {
 			log::error!("{}", msg);
 			return Err(anyhow!(msg))
 		}
+		 */
 
 		{
 			let staking_state = StakingState::new(db_pool_conn).await?;
