@@ -24,7 +24,8 @@ rpc_disable_estimate_fee = false
  cluster_address = "0101010101010101010101010101010101010101"
  boot_nodes = ["[BOOT_NODE_ADDRESS]"] # addresses of the boot node. Eg:"/ip4/3.254.147.238/tcp/5010/p2p/16Uiu2HAm5cnMkuwwmNyNdHNzxvhtHxKQ1xJtF7zb5Fpm9zbe7qmm"
  
- archive_nodes = ['https://v2-mainnet-archive.l1x.foundation/'] # base url of s3 bucket, which will be used to download the database dump eg: https://archive-snapshots.l1x.foundation/
+ archive_nodes = [] # DEPRECATED: 
+ archive_snapshot_sources = ['https://v2-mainnet-archive.l1x.foundation/'] # base url of Snapshot source, which will be used to download the database dump eg: https://archive-snapshots.l1x.foundation/
  archive_public_key = "03aa7c205ddb5048408f48de46002c171a712613058c8ee12c73aeeed5ae016f2b" # public key of archive node, required for signature verification at the time of apply-snapshot
  
  sync_node_time_interval = 120 # interval in seconds. Archive node uses this to sync with boot node

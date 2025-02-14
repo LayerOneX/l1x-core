@@ -15,7 +15,7 @@ use system::block::{Block, BlockSignPayload};
 use system::block_header::BlockHeader;
 use system::transaction::{Transaction, TransactionType};
 use execute::execute_fee;
-
+use log::info;
 pub struct ValidateBlock {}
 
 impl<'a> ValidateBlock {
@@ -76,7 +76,11 @@ impl<'a> ValidateBlock {
 
 		// Validate rewards for the previous block can be distributed or not
 		let eligible_validators_for_reward =
-			get_eligible_validators_for_reward(last_block_votes_validators, db_pool_conn).await?;
+			get_eligible_validators_for_reward(last_block_votes_validators.clone(), db_pool_conn).await?;
+
+		info!("eligible_validators_for_reward: {:?}", eligible_validators_for_reward);
+		info!("last_block_votes_validators: {:?}", last_block_votes_validators);
+		
 		// Validate block header and transactions
 		validate_block_header_and_transactions(&block_payload, db_pool_conn, cluster_address, Some(eligible_validators_for_reward)).await?;
 
@@ -196,6 +200,16 @@ fn validate_expected_block_fields(
 		"Incorrect parent hash: actual {:?}, expected: {:?}",
 		hex::encode(new_block.block_header.parent_hash),
 		hex::encode(expected_parent_hash)
+		));
+	}
+
+	// Validate state_hash
+	let expected_state_hash = last_block_header.state_hash;
+	if expected_state_hash != new_block.block_header.state_hash {
+		return Err(anyhow!(
+		"Incorrect state hash: actual {:?}, expected: {:?}",
+		hex::encode(new_block.block_header.state_hash),
+		hex::encode(expected_state_hash)
 		));
 	}
 

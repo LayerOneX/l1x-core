@@ -45,6 +45,8 @@ use block::block_state::BlockState;
 use block::block_manager::BlockManager;
 use system::node_health::NodeHealth;
 use compile_time_config::{ NODE_STATUS_TIMER, ELIGIBLE_PEERS_INIT_BLOCK_NUMBER };
+use lazy_static::lazy_static;
+use std::sync::Mutex;
 
 fn deserialize<'a, R: Deserialize<'a>>(encoded_data: &'a [u8]) -> Result<R, io::Error> {
 	bincode::deserialize(encoded_data).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
@@ -52,6 +54,11 @@ fn deserialize<'a, R: Deserialize<'a>>(encoded_data: &'a [u8]) -> Result<R, io::
 
 fn serialize<D: Serialize>(data: &D) -> Result<Vec<u8>, io::Error> {
 	bincode::serialize(data).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
+}
+
+// Implement Lazy Static for ACTIVE_PEERS
+lazy_static! {
+	static ref ACTIVE_PEERS: Mutex<Vec<PeerId>> = Mutex::new(Vec::new());
 }
 
 /// Creates the network components, namely:
@@ -148,19 +155,20 @@ pub async fn new(
 	let (command_sender, command_receiver) = mpsc::channel(1000);
 	let (event_sender, event_receiver) = mpsc::channel(1000);
 	let client = Client { sender: command_sender, event_sender: event_sender.clone() };
+	let event_loop = EventLoop::new(swarm, command_receiver, event_sender, dht_health_storage);
 	
 	// Start peer discovery
-	match client.start_peer_discovery().await {
-		Ok(_) => {},
-		Err(e) => {
-			error!("Failed to start peer discovery: {:?}", e);
-		}
-	};
-	
+	// match client.start_peer_discovery().await {
+	// 	Ok(_) => {},
+	// 	Err(e) => {
+	// 		error!("Failed to start peer discovery: {:?}", e);
+	// 	}
+	// };
+
 	Ok((
 		client,
 		event_receiver,
-		EventLoop::new(swarm, command_receiver, event_sender, dht_health_storage),
+		event_loop,
 	))
 }
 
@@ -241,7 +249,7 @@ impl Client {
 
 				match block_state.is_block_executed(header.block_number, &cluster_address).await {
 					Ok(true) => {
-						log::debug!("DEBUG: Block is executed, processing node health for epoch: {}, last_processed_epoch: {:?}, block_number: {}", current_epoch.clone(), last_processed_epoch.clone(), header.block_number.clone());
+						log::debug!("start_node_health_monitoring ~ Block is executed, processing node health for epoch: {}, last_processed_epoch: {:?}, block_number: {}", current_epoch.clone(), last_processed_epoch.clone(), header.block_number.clone());
 
 						// Process node health
 						if last_processed_epoch != Some(current_epoch) {
@@ -260,7 +268,7 @@ impl Client {
 							}
 						}
 
-						log::debug!("DEBUG: Last aggregated epoch: {:?}", last_aggregated_epoch.clone());
+						log::debug!("start_node_health_monitoring ~ Last aggregated epoch: {:?}", last_aggregated_epoch.clone());
 						// Aggregate node health
 						if last_aggregated_epoch != Some(current_epoch) {
 							match block_manager.is_approaching_epoch_end(header.block_number, 10).await {
@@ -279,7 +287,7 @@ impl Client {
 						}
 					},
 					Ok(false) => {
-						log::debug!("DEBUG: Block is not executed, skipping node health aggregation");
+						log::debug!("start_node_health_monitoring ~ Block is not executed, skipping node health aggregation");
 						continue
 					},
 					Err(e) => {
@@ -295,7 +303,7 @@ impl Client {
 	pub async fn start_node_monitoring(
 		&self,
 	) -> Result<(), Box<dyn Error + Send>> {
-		info!("Node monitoring has started");
+		info!("start_node_monitoring ~ Node monitoring has started");
 		let sender = self.event_sender.clone();
 		let timer_duration = Duration::from_secs(NODE_STATUS_TIMER);
 		tokio::spawn(async move {
@@ -313,7 +321,7 @@ impl Client {
 		let sender = self.event_sender.clone();
 		
 		tokio::spawn(async move {
-			let mut interval = tokio::time::interval(Duration::from_secs(60)); // Adjust interval as needed
+			let mut interval = tokio::time::interval(Duration::from_secs(10)); // Adjust interval as needed
 			
 			loop {
 				interval.tick().await;
@@ -327,6 +335,38 @@ impl Client {
 		
 		Ok(())
 	}
+
+	pub async fn start_ping_eligible_peers(&self, current_epoch: Epoch) {
+		let sender = self.event_sender.clone();
+		let mut interval = tokio::time::interval(Duration::from_secs(10));
+		tokio::spawn(async move {
+			loop {
+				interval.tick().await;
+
+				let active_peers = match ACTIVE_PEERS.lock() {
+					Ok(peers) => peers.iter().map(|peer| peer.to_string()).collect(),
+					Err(e) => {
+						error!("start_ping_eligible_peers ~ Failed to lock ACTIVE_PEERS: {:?}", e);
+						return;
+					}
+				};
+
+				info!("start_ping_eligible_peers ~ Active peers: {:?}", active_peers);
+
+				let _ = sender
+					.send(Event::PingEligiblePeers {
+						epoch: current_epoch, // Or determine current epoch
+						peer_ids: active_peers
+					})
+					.await
+					.unwrap_or_else(|e| error!("Failed to send PingEligiblePeers event: {:?}", e));
+
+				
+			}
+		});
+	}
+	
+	
 }
 
 #[async_trait]
@@ -643,6 +683,40 @@ impl EventLoop {
 		}
 	}
 
+	
+	async fn add_active_peer(&mut self, peer_id: PeerId) -> Result<(), anyhow::Error> {
+		let mut peers = match ACTIVE_PEERS.lock() {
+			Ok(peers) => peers,
+			Err(e) => {
+				error!("Failed to lock ACTIVE_PEERS: {:?}", e);
+				return Err(anyhow!("Failed to lock ACTIVE_PEERS"));
+			}
+		};
+
+		if !peers.contains(&peer_id) {
+			peers.push(peer_id);
+		}
+
+		Ok(())
+	}
+
+	async fn remove_active_peer(&mut self, peer_id: PeerId) -> Result<(), anyhow::Error> {
+		let mut peers = match ACTIVE_PEERS.lock() {
+			Ok(peers) => peers,
+			Err(e) => {
+				error!("Failed to lock ACTIVE_PEERS: {:?}", e);
+				return Err(anyhow!("Failed to lock ACTIVE_PEERS"));
+			}
+		};
+
+		let peer_to_remove = peers.iter().position(|id| id == &peer_id);
+		if let Some(index) = peer_to_remove {
+			peers.remove(index);
+		}
+	
+		Ok(())
+	}
+	
 	/// Handles events received from the p2p network. This can result in anything from logging some
 	/// info to sending a transaction for mempool validation.
 	async fn handle_event(
@@ -664,6 +738,16 @@ impl EventLoop {
 					if let Some(sender) = self.pending_dial.remove(&peer_id) {
 						let _ = sender.send(Ok(()));
 					}
+
+					debug!("ConnectionEstablished ~ Peer ID: {:?}", peer_id);
+
+					// Update the active peers to lazy static ACTIVE_PEERS
+					match self.add_active_peer(peer_id).await {
+						Ok(_) => debug!("ConnectionEstablished ~ Peer ID: {:?} added to ACTIVE_PEERS", peer_id),
+						Err(e) => error!("ConnectionEstablished ~ Peer ID: {:?} failed to add to ACTIVE_PEERS: {:?}", peer_id, e),
+					}
+					
+
 				},
 			SwarmEvent::ConnectionClosed { peer_id, cause, endpoint, .. } => {
 				if let Some(cause) = cause {
@@ -672,6 +756,13 @@ impl EventLoop {
 					warn!("Connection closed with peer {}", peer_id);
 				}
 				self.handle_peer_disconnection(peer_id).await;
+
+				debug!("ConnectionClosed ~ Peer ID: {:?}", peer_id);
+				
+				match self.remove_active_peer(peer_id).await {
+					Ok(_) => debug!("ConnectionClosed ~ Peer ID: {:?} removed from ACTIVE_PEERS", peer_id),
+					Err(e) => error!("ConnectionClosed ~ Peer ID: {:?} failed to remove from ACTIVE_PEERS: {:?}", peer_id, e),
+				}
 			},
 			SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
 				if let Some(peer_id) = peer_id {
@@ -686,6 +777,7 @@ impl EventLoop {
 			SwarmEvent::Dialing(peer_id) => info!("Dialing {peer_id}"),
 			SwarmEvent::Behaviour(event) => match event {
 				BehaviourEvent::Identify(event) => match event {
+					
 					// Prints peer id identify info is being sent to.
 					identify::Event::Sent { peer_id, .. } => {
 						info!("Sent identify info to {peer_id:?}")
@@ -769,7 +861,8 @@ impl EventLoop {
 										})
 										.await
 										.unwrap_or_else(|e| error!("Failed to send PingEligiblePeers event: {:?}", e));
-								}		
+									
+								}	
 							}
 							Err(e) => {
 								warn!("GetClosestPeers query failed: {:?}", e);
@@ -784,10 +877,18 @@ impl EventLoop {
 				},
 				BehaviourEvent::Gossipsub(event) => match event {
 					gossipsub::Event::Subscribed { peer_id, topic } => {
-						info!("Peer: {peer_id:?} subscribed to '{topic:?}'",)
+						info!("Peer: {peer_id:?} subscribed to '{topic:?}'");
+						match self.add_active_peer(peer_id).await {
+							Ok(_) => debug!("Peer: {peer_id:?} added to ACTIVE_PEERS"),
+							Err(e) => error!("Peer: {peer_id:?} failed to add to ACTIVE_PEERS: {:?}", e),
+						}
 					},
 					gossipsub::Event::Unsubscribed { peer_id, topic } => {
-						info!("Peer: {peer_id:?} unsubscribed from '{topic:?}'",)
+						info!("Peer: {peer_id:?} unsubscribed from '{topic:?}'");
+						match self.remove_active_peer(peer_id).await {
+							Ok(_) => debug!("Peer: {peer_id:?} removed from ACTIVE_PEERS"),
+							Err(e) => error!("Peer: {peer_id:?} failed to remove from ACTIVE_PEERS: {:?}", e),
+						}
 					},
 					gossipsub::Event::Message {
 						propagation_source: peer_id,
@@ -1040,7 +1141,7 @@ impl EventLoop {
 					}
 				},
 				BehaviourEvent::RequestResponse(event) => match event {
-					request_response::Event::Message { peer: _, message } => match message {
+					request_response::Event::Message { peer: sender_peer, message } => match message {
 						request_response::Message::Request { request, channel, .. } => {
 							log::debug!("Received request: {:?} from channel: {:?}", request, channel);
 							match request {
@@ -1086,10 +1187,12 @@ impl EventLoop {
 									log::warn!("Query block error: {:?}", error_message);
 								}
 
-								L1xResponse::QueryNodeStatus(peer_id, request_time) => {
+								L1xResponse::QueryNodeStatus(_, request_time) => {
+									let peer_id = sender_peer.to_string(); // Use the actual sender peer id
+									log::debug!("Received L1xResponse::QueryNodeStatus response from peer: {:?}", peer_id);
 									if let Ok(current_timestamp) = util::generic::current_timestamp_in_millis() {
 										let response_time = current_timestamp - request_time;
-										log::debug!("DEBUG: Sending Event::PingResult event to event_sender channel, peer_id: {:?}, is_success: {:?}, rtt: {:?}", peer_id, true, response_time as u64);
+										log::debug!("Sending Event::PingResult event to event_sender channel, peer_id: {:?}, is_success: {:?}, rtt: {:?}", peer_id, true, response_time as u64);
 										self.event_sender.send(Event::PingResult {
 											peer_id: peer_id,
 											is_success: true,
@@ -1414,6 +1517,12 @@ struct Behaviour {
 #[derive(Clone)]
 struct L1xCodec;
 
+// Add Maximum size limit for request
+impl L1xCodec {
+	const MAX_REQUEST_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+	const MAX_RESPONSE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
+}
+
 #[derive(Debug, Clone)]
 struct L1xProtocol;
 
@@ -1438,6 +1547,8 @@ impl libp2p::request_response::Codec for L1xCodec {
 		T: AsyncRead + Unpin + Send,
 	{
 		let mut response = Vec::new();
+		// Add size limit for request
+		let mut socket = socket.take(Self::MAX_REQUEST_SIZE);
 		socket.read_to_end(&mut response).await?;
 		deserialize(&response)
 	}
@@ -1451,6 +1562,8 @@ impl libp2p::request_response::Codec for L1xCodec {
 		T: AsyncRead + Unpin + Send,
 	{
 		let mut response = Vec::new();
+		// Add size limit for response
+		let mut socket = socket.take(Self::MAX_RESPONSE_SIZE);
 		socket.read_to_end(&mut response).await?;
 		deserialize(&response)
 	}
