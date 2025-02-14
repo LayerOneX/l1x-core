@@ -549,6 +549,7 @@ impl<'a> Mempool {
 		let vote_result_state = vote_result::vote_result_state::VoteResultState::new(&db_pool_conn).await?;
 		let mut reward_txs= Vec::new();
 		if let Ok(vote_result) = vote_result_state.load_vote_result(block_hash).await {
+			debug!("build_reward_transactions ~ Vote Addresses: {:?}", vote_result.data.votes.iter().map(|v| hex::encode(v.validator_address)).collect::<Vec<String>>());
 			let account_state = AccountState::new(&db_pool_conn).await?;
 			let mut nonce = account_state.get_nonce(&SYSTEM_REWARDS_DISTRIBUTOR).await?;
 
@@ -563,10 +564,19 @@ impl<'a> Mempool {
 
 			let fee_limit = execution_fee.get_token_transfer_tx_total_fee()?;
 
+			// Stake info for all nodes
+			debug!("build_reward_transactions ~ rt_stake_info: {:?}", 
+				rt_stake_info.nodes.iter()
+					.map(|(k, v)| (hex::encode(k), v.staked_balance))
+					.collect::<Vec<(String, u128)>>()
+			);
+
 			// Create transactions
 			for vote in &vote_result.data.votes {
 				let validator_address = Account::address(&vote.verifying_key)?;
 				// skip org_nodes from rewards distribution
+				debug!("build_reward_transactions ~ Is Org Node: {:?}", rt_config.org_nodes.contains(&validator_address));
+				debug!("build_reward_transactions ~ Validator Address: {:?}", hex::encode(validator_address));
 				if !rt_config.org_nodes.contains(&validator_address) {
 					if let Some(info) = rt_stake_info.nodes.get(&validator_address) {
 						nonce += 1;

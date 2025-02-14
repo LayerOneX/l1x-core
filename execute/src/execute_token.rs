@@ -14,7 +14,6 @@ impl ExecuteToken {
 		amount: Balance,
 		updated_state: &mut UpdatedState,
 	) -> Result<(), Error> {
-		info!("DEBUB::TMP_27012025: Executing native token transfer from: {:?} to: {:?} amount: {}", hex::encode(from_address), hex::encode(to_address), amount);
 		if is_mint(from_address, to_address)? {
 			info!("Minting {} tokens for address: {:?}", amount, hex::encode(to_address));
 			updated_state.mint(amount, to_address)?;

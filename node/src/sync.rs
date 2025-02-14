@@ -989,14 +989,45 @@ async fn delete_table(conn: &mut PooledConnection<ConnectionManager<PgConnection
 }
 
 pub async fn apply_db_dump(config: Config) -> Result<(), Error> {
-    let s3_files = [DB_DUMP_SIGNATURE, DB_DUMP];
+    let snapshot_files = [DB_DUMP_SIGNATURE, DB_DUMP];
 
     let download_start_time = Instant::now();
-    for file in s3_files {
-        if let Err(error) = download_file(&config.archive_nodes[0], file).await {
-            return Err(anyhow!("Unable to download file from s3: {:?}", error));
+    let mut download_last_error = None;
+    
+    // Try each node until we find one that serves all files
+    for node in config.archive_snapshot_sources.clone() {
+        let mut node_success = true;
+        
+        for file in snapshot_files {
+            info!("Downloading file: {:?} from snapshot node: {:?}", file, node);
+            match download_file(&node, file).await {
+                Ok(_) => {
+                    info!("Successfully downloaded {} from {}", file, node);
+                },
+                Err(e) => {
+                    error!("Failed to download {} from {}: {}", file, node, e);
+                    node_success = false;
+                    download_last_error = Some(e);
+                    break;  // Move to next node after first failure
+                }
+            }
+        }
+        
+        if node_success {
+            info!("All files downloaded successfully from {}", node);
+            download_last_error = None;
+            break;
         }
     }
+
+    if let Some(e) = download_last_error {
+        return Err(anyhow!(
+            "Failed to download snapshot from all nodes. Last error: {} (from {})", 
+            e,
+            config.archive_snapshot_sources.last().unwrap_or(&"unknown".to_string())
+        ));
+    }
+
     info!(
         "⌛️ Files downloaded in: {:?} seconds",
         download_start_time.elapsed().as_secs()

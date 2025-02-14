@@ -34,7 +34,7 @@ use system::{
 };
 use block::{block_manager::BlockManager, block_state::BlockState};
 use block_proposer::block_proposer_state::BlockProposerState;
-use l1x_htm::{realtime_checks::RealTimeChecks};
+use l1x_htm::realtime_checks::RealTimeChecks;
 use system::config::InitialEpochConfig;
 use system::block::QueryStatusRequest;
 use system::node_health::NodeHealth;
@@ -156,9 +156,8 @@ impl <'a> FullNode {
 				panic!()
 			},
 		};
-		let node_private_key = node_private_key.as_str();
 		let secret_key = SecretKey::from_slice(
-			&hex::decode(node_private_key).expect("Error decoding node_private_key"),
+			&hex::decode(&node_private_key).expect("Error decoding node_private_key"),
 		)
 		.expect("Failed to parse provided private_key");
 		let secp = Secp256k1::new();
@@ -170,11 +169,9 @@ impl <'a> FullNode {
 		debug!("Verifying key: {:?}", hex::encode(&verifying_key_bytes));
 		info!("NODE ADDRESS: 0x{}", hex::encode(node_address));
 
-		let node_keypair = node_priv_key.as_ref().map_or_else(
-			|| Keypair::generate_secp256k1(),
-			|private_key| {
+		let node_keypair =  {
 				let mut keypair_bytes =
-					hex::decode(private_key).expect("Failed to hex decode privkey");
+					hex::decode(&node_private_key).expect("Failed to hex decode privkey");
 				let secret_key =
 					libp2p::identity::secp256k1::SecretKey::try_from_bytes(&mut keypair_bytes)
 						.expect("Failed to parse keypair");
@@ -187,8 +184,7 @@ impl <'a> FullNode {
 					secp_keypair.try_into().expect("Failed to convert to Keypair");
 
 				keypair
-			},
-		);
+			};
 		// initialize database
 		let db_pool_conn =
 			Database::get_pool_connection().await.expect("unable to get db_pool_conn");
@@ -246,7 +242,10 @@ impl <'a> FullNode {
 			// Handling L1XVM events
 			task::spawn(Self::node_event_receiver_process(node_event_tx.clone()));
 
-			try_initialize_runtime_configs(cluster_address).await;
+			match try_initialize_runtime_configs(cluster_address).await {
+				Ok(_) => info!("Runtime configs initialized, attempt 1"),
+				Err(e) => error!("Failed to initialize runtime config in attempt 1: {}", e),
+			}
 
 			// Only sync when in multinode mode
 			if multinode_mode && !bootnodes.is_empty() {
@@ -295,6 +294,12 @@ impl <'a> FullNode {
 					Err(e) => {
 						panic!("Unable to sync node: {:?}", e);
 					},
+				}
+
+				// Initialize runtime configs, one more time to make sure it's initialized
+				match try_initialize_runtime_configs(cluster_address).await {
+					Ok(_) => info!("Runtime configs initialized, attempt 2"),
+					Err(e) => error!("Failed to initialize runtime config in attempt 2: {}", e),
 				}
 			}
 
@@ -483,6 +488,9 @@ impl <'a> FullNode {
 				network_client.start_node_monitoring()
 					.await
 					.expect("Failed to start node monitoring");
+
+				// Start ping eligible peers
+				network_client.start_ping_eligible_peers(latest_epoch).await;
 			}
 
 			(full_node, mempool_res_rx)
@@ -671,7 +679,7 @@ impl <'a> FullNode {
 							}
 						},
 						Event::AggregateNodeHealth { epoch } => {
-							debug!("DEBUG: Sending Event::AggregateNodeHealth event to network_receive_tx channel, epoch: {}", epoch);
+							debug!("Sending Event::AggregateNodeHealth event to network_receive_tx channel, epoch: {}", epoch);
 							if let Err(e) = network_receive_tx
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::AggregateNodeHealth(epoch)))
 								.await
@@ -704,7 +712,7 @@ impl <'a> FullNode {
 							}
 						},
 						Event::InitializePeers => {
-							debug!("DEBUG: Received Event::InitializePeers event");
+							debug!("Received Event::InitializePeers event");
 						}
 					}
 				},

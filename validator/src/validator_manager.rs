@@ -3,7 +3,7 @@ use runtime_config::{RuntimeConfigCache, RuntimeStakingInfoCache};
 use anyhow::Error;
 
 use db::db::DbTxConn;
-use log::info;
+use log::{info, debug};
 use primitives::{Address, Epoch};
 use system::{block_header::BlockHeader, config::Config, node_health::NodeHealth, validator::Validator};
 use xscore::{kin_score::NodePerformanceMetrics, XScoreCalculator, stake_score::{NodeStakeInfo, StakeScoreCalculator}, XScoreWeights};
@@ -32,8 +32,13 @@ impl<'a> ValidatorManager {
 
 		let stacking_info = RuntimeStakingInfoCache::get().await?;
 		for (node_address, info) in &stacking_info.nodes {
-			// Skip org nodes(always have the highest xscore) and nodes with zero staked balance early
-			if rt_config.org_nodes.contains(node_address) || info.staked_balance == 0  {
+
+			debug!("select_validators_for_epoch ~ Node address: {:?}, Staked balance: {:?}, Min pool balance: {:?}", hex::encode(node_address), info.staked_balance, info.min_pool_balance);
+			debug!("select_validators_for_epoch ~ Is org node: {:?}", rt_config.org_nodes.contains(node_address));
+			debug!("select_validators_for_epoch ~ Staked balance less than min pool balance: {:?}", info.staked_balance < info.min_pool_balance);
+
+			// Skip org nodes(always have the highest xscore) and nodes with staked balance less than the minimum balance
+			if rt_config.org_nodes.contains(node_address) || info.staked_balance  < info.min_pool_balance {
 				continue;
 			}
 
@@ -46,6 +51,7 @@ impl<'a> ValidatorManager {
 				}
 			};
 
+			debug!("select_validators_for_epoch ~ Node info: {:?}", node_info);
 			// Skip this account if it doesn't have a peer_id
 			if node_info.peer_id.is_empty() {
 				log::warn!("Skipping validator selection for address 0x{} due to missing peer_id. Please update node info", hex::encode(node_address));
@@ -56,8 +62,13 @@ impl<'a> ValidatorManager {
 				.load_node_health(&node_info.peer_id, current_epoch)
 				.await? {
 				Some(health) => health,
-				None => continue,
+				None => {
+					log::warn!("Skipping validator selection for address 0x{} due to missing node health for epoch: {}", hex::encode(node_address), current_epoch);
+					continue;
+				},
 			};
+
+			debug!("select_validators_for_epoch ~ Node health: {:?}", node_health);
 
 			let xscore = self
 				.calculate_xscore(node_address, last_block_header, &node_health, &db_pool_conn)
@@ -67,7 +78,7 @@ impl<'a> ValidatorManager {
 					e
 				})?;
 				
-				info!("Required XScore: {:?}, Node XScore: {:?}, Node Address:  {:?}", rt_config.xscore.xscore_threshold.clone(), xscore, hex::encode(node_address));
+			info!("Required XScore: {:?}, Node XScore: {:?}, Node Address:  {:?}", rt_config.xscore.xscore_threshold.clone(), xscore, hex::encode(node_address));
 
 			eligible_validators.push(Validator {
 				address: *node_address,
@@ -120,9 +131,14 @@ impl<'a> ValidatorManager {
 			.get(validator_address)
 			.ok_or(anyhow::anyhow!("No staking info for '{}'", hex::encode(validator_address)))?;
 
+		debug!("calculate_xscore ~ Calculating xscore for node: {:?}", hex::encode(validator_address));
+		debug!("calculate_xscore ~ Node pool info: {:?}", node_pool_info);
+
 		let mut stake_score_calculator = StakeScoreCalculator::new(12, &rt_config.stake_score); // Use the default weights as per the 12-month period
 		stake_score_calculator.min_balance = node_pool_info.min_pool_balance;
 		stake_score_calculator.max_balance = node_pool_info.max_pool_balance;
+
+		debug!("calculate_xscore ~ Stake score calculator: {:?}", stake_score_calculator);
 
 		let xscore_calculator = XScoreCalculator {
 			stake_score_calculator,
@@ -139,6 +155,8 @@ impl<'a> ValidatorManager {
 		} else {
 			0
 		};
+
+		debug!("calculate_xscore ~ Pool stake age: {:?}", pool_stake_age);
 
 		let node_stake_info = NodeStakeInfo {
 			stake_balance: node_pool_info.staked_balance,
@@ -166,6 +184,8 @@ impl<'a> ValidatorManager {
 				return Err(anyhow::anyhow!("Failed to calculate xscore: {}", e));
 			}
 		};
+
+		debug!("calculate_xscore ~ Xscore: {:?} for node: {:?}", xscore, hex::encode(validator_address));
 
 		Ok(xscore)
 	}

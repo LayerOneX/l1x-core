@@ -44,6 +44,7 @@ diesel = { version = "2.1.3", features = [
 bigdecimal = "0.4.2"
 util = { package = 'util', path = '../util', default-features = false }
 compile_time_config = { package = 'compile_time_config', path = '../compile_time_config' }
+runtime_config = { package = 'runtime_config', path = '../runtime_config' }
 
 
 [lints]

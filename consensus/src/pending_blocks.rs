@@ -6,7 +6,7 @@ use anyhow::{anyhow, Error};
 use block::{block_state::BlockState, block_manager::BlockManager};
 use db::db::DbTxConn;
 use execute::execute_block::ExecuteBlock;
-use log::{error, info, warn};
+use log::{error, info, warn, debug};
 use primitives::*;
 use secp256k1::{PublicKey, SecretKey};
 use system::{
@@ -131,33 +131,43 @@ impl<'a> PendingBlock {
 		Ok(())
 	}
 
-	pub fn try_to_vote_result(&self,
+	pub async fn try_to_vote_result(&self,
 		secret_key: &SecretKey,
 		verifying_key: &PublicKey,
 		block_proposer_address: Address,
 		validators: Vec<Validator>,
+		db_pool_conn: &'a DbTxConn<'a>,
+		pool_address: Address,
 	) -> Result<VoteResult, Error> {
 		let votes = self.all_votes();
+
+		// Iterate Votes to hex::encode
+		for v in votes.clone() {
+			debug!("try_to_vote_result ~ Votes ~ Validator address: {:?}, for block #{}, epoch: {}", hex::encode(v.validator_address), v.data.block_number, v.data.epoch);
+		}
+		// Iterate Validators to hex::encode
+		debug!("try_to_vote_result ~ Votes: {:?}", votes);
 		if let Some(vote_) = votes.get(0) {
 			let block_number = vote_.data.block_number;
 			let block_hash = vote_.data.block_hash;
 			let cluster_address = vote_.data.cluster_address;
 			let result = vote_result_manager::VoteResultManager::try_to_generate_vote_result(
-				block_number, block_hash, cluster_address, self.all_votes(), secret_key, verifying_key, block_proposer_address, validators)?;
+				block_number, block_hash, cluster_address, self.all_votes(), secret_key, verifying_key, block_proposer_address, validators, db_pool_conn, &pool_address).await?;
 			if let Some(vote_result) = result {
 				Ok(vote_result)
 			} else {
-				Err(anyhow!("Can't generate VoteResult block #{}", block_number))
+				Err(anyhow!("try_to_vote_result ~ vote_result_manager::VoteResultManager::try_to_generate_vote_result ~ Can't generate VoteResult block #{}", block_number))
 			}
 		} else {
 			let block_number = self.get_block().and_then(|b| Some(b.block.block_header.block_number));
-			Err(anyhow!("Can't generate VoteResult block #{:?}", block_number))
+			Err(anyhow!("try_to_vote_result ~ self.get_block().and_then ~ Can't generate VoteResult block #{:?}", block_number))
 		}
 	}
 
 	pub async fn try_to_finalize(
 		&mut self,
 		db_pool_conn: &'a DbTxConn<'a>,
+		pool_address: Address,
 	) -> Result<Vec<EventData>, Error> {
 		let block_payload = self.get_block().cloned().ok_or(anyhow!("Block is not set"))?;
 
@@ -190,11 +200,16 @@ impl<'a> PendingBlock {
 			block_proposer_address,
 		);
 
+
 		// publish vote if and only if node is a validator, not a block proposer
-		if validator_state.is_validator(&self.node_address, block_payload.block.block_header.epoch).await?
-			&& !block_proposer_manager.is_block_proposer(block_proposer, &db_pool_conn).await?
+		let is_validator = validator_state.is_validator(&self.node_address, block_payload.block.block_header.epoch).await?;
+		let is_block_proposer = block_proposer_manager.is_block_proposer(block_proposer, &db_pool_conn).await?;
+		debug!("try_to_finalize ~ Epoch: {}, Node Address: {:?}, is_validator: {:?}, is_block_proposer: {:?}", block_payload.block.block_header.epoch, hex::encode(self.node_address), is_validator, is_block_proposer);
+
+		if is_validator && !is_block_proposer
 		{
 			let vote = if let Some(vote) = self.votes.iter().find(|vote| vote.verifying_key == self.verifying_key.serialize().to_vec()).cloned() {
+				debug!("try_to_finalize ~ Vote found: {:?}", hex::encode(vote.validator_address));
 				vote
 			} else {
 				let valid_block = true;
@@ -215,10 +230,13 @@ impl<'a> PendingBlock {
 					self.verifying_key.serialize().to_vec(),
 				);
 
+				debug!("try_to_finalize ~ Vote added: {:?}", hex::encode(vote.validator_address));
+
 				self.add_vote(vote.clone());
 				vote
 			};
 
+			debug!("try_to_finalize ~ Broadcasting vote to network_client_tx channel, Block #: {:?}, Validator address: {:?}", vote.data.block_number, hex::encode(vote.validator_address));
 			if let Err(e) =
 				self.network_client_tx.send(BroadcastNetwork::BroadcastVote(vote)).await
 			{
@@ -230,11 +248,20 @@ impl<'a> PendingBlock {
 
 		self.validate_vote_results(db_pool_conn).await?;
 
-		let passed_vote_result: Option<VoteResult> = self
-			.vote_results
-			.iter()
-			.find(|v| vote_result_manager::VoteResultManager::is_vote_result_passed(v, validators.clone()))
-			.cloned();
+		let mut passed_vote_result: Option<VoteResult> = None;
+	
+		for v in self.vote_results.iter() {
+			let passed = vote_result_manager::VoteResultManager::is_vote_result_passed(
+				v,
+				validators.clone(),
+			)
+			.await?;
+			debug!("try_to_finalize ~ VoteResult for block #{}:, Validator address: {:?}, Passed: {:?}", v.data.block_number, hex::encode(v.validator_address), passed);
+			if passed {
+				passed_vote_result = Some(v.clone());
+				break; // stop after finding the first passing vote
+			}
+		}
 
 		if let Some(vote_result) = passed_vote_result {
 			// calculating new block proposer
@@ -255,6 +282,9 @@ impl<'a> PendingBlock {
 			// store vote_result
 			let vote_state = VoteResultState::new(&db_pool_conn).await?;
 			vote_state.store_vote_result(&vote_result).await?;
+
+			debug!("try_to_finalize ~ Stored VoteResult for block #{}:, Validator address: {:?}", vote_result.data.block_number, hex::encode(vote_result.validator_address));
+;
 			// store block
 			let block_state = BlockState::new(&db_pool_conn).await?;
 			block_state.store_block(block_payload.block.clone()).await?;
@@ -400,16 +430,18 @@ impl<'a> PendingBlocks {
 		}
 	}
 
-	pub fn try_to_vote_result(
+	pub async fn try_to_vote_result(
 		&self,
 		block_number: BlockNumber,
 		secret_key: &SecretKey,
 		verifying_key: &PublicKey,
 		block_proposer_address: Address,
 		validators: Vec<Validator>,
+		db_pool_conn: &'a DbTxConn<'a>,
+		pool_address: Address,
 	) -> Result<VoteResult, Error> {
 		if let Some(pending_block) = self.blocks.get(&block_number) {
-			pending_block.try_to_vote_result(secret_key, verifying_key, block_proposer_address, validators)
+			pending_block.try_to_vote_result(secret_key, verifying_key, block_proposer_address, validators, db_pool_conn, pool_address).await
 		} else {
 			Err(anyhow!("Can't find pending Block #{}", block_number))
 		}
@@ -417,6 +449,10 @@ impl<'a> PendingBlocks {
 
 	pub fn get_blocks(&self) -> &HashMap<BlockNumber, PendingBlock> {
 		&self.blocks
+	}
+
+	pub fn remove_block(&mut self, block_number: BlockNumber) {
+		self.blocks.remove(&block_number);
 	}
 
 	pub async fn try_to_validate_block(
@@ -431,7 +467,7 @@ impl<'a> PendingBlocks {
 		}
 	}
 
-	pub async fn try_to_finalize(&mut self, db_pool_conn: &'a DbTxConn<'a>) -> Result<(), Error> {
+	pub async fn try_to_finalize(&mut self, db_pool_conn: &'a DbTxConn<'a>, pool_address: Address) -> Result<(), Error> {
 		if self.blocks.is_empty() {
 			return Ok(());
 		}
@@ -459,7 +495,7 @@ impl<'a> PendingBlocks {
 				_ => {
 					info!("Try to finalize Block #{}", block_number);
 					if let Some(pending_block) = self.blocks.get_mut(&block_number) {
-						match pending_block.try_to_finalize(db_pool_conn).await {
+						match pending_block.try_to_finalize(db_pool_conn, pool_address).await {
 							Ok(_e) => {
 								info!("Block #{} is finalized", block_number);
 								finalized_blocks.push(block_number)
