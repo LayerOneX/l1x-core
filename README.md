@@ -105,7 +105,6 @@ Special thanks to:
 - The L1X Community
 - The L1X Foundation team
 
-**Note:** This code is currently being audited by Hashlock to ensure security and reliability.
 
 ## Contact
 - Technical Support: https://quick.l1xapp.com/L1XDiscordDevSupport
