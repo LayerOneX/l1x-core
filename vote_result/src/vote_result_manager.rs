@@ -14,8 +14,9 @@ use std::collections::HashSet;
 use runtime_config::{RuntimeConfigCache, RuntimeStakingInfoCache};
 use std::sync::Arc;
 
-const VOTE_THRESHOLD: f64 = 0.6; // 60%
-const STAKE_PASS_THRESHOLD: f64 = 0.5;
+const VOTE_THRESHOLD: f64 = 0.60; // 60%
+const STAKE_PASS_NUMERATOR: u64 = 60;
+const STAKE_PASS_DENOMINATOR: u64 = 100;
 
 /// Returns the minimum number of votes required, based on a configurable threshold.
 /// 
@@ -28,7 +29,8 @@ const STAKE_PASS_THRESHOLD: f64 = 0.5;
 /// let min_votes = calculate_min_votes(10, 0.7); // ~7
 /// ```
 fn calculate_min_votes(validators_count: usize, threshold_percent: f64) -> usize {
-	(validators_count as f64 * threshold_percent).ceil() as usize
+	// Add safety margin for floating point precision
+	((validators_count as f64 * threshold_percent) - f64::EPSILON).ceil() as usize
 }
 
 pub struct VoteResultManager {
@@ -161,8 +163,8 @@ impl<'a> VoteResultManager {
 
 			// If 50% of the vote is in favour of the block, the block is accepted
 			// let vote_passed = (total_favoured_stake / pool_balance as f64) > 0.5;
-			let vote_passed = stake_ratio > STAKE_PASS_THRESHOLD;
-			debug!("vote_result ~ Vote passed: {:?} for block #{}, STAKE_PASS_THRESHOLD: {:?}", vote_passed, block_number, STAKE_PASS_THRESHOLD);
+			let vote_passed = stake_ratio > (STAKE_PASS_NUMERATOR as f64 / STAKE_PASS_DENOMINATOR as f64) - f64::EPSILON;
+			debug!("vote_result ~ Vote passed: {:?} for block #{}, ratio: {}/{}", vote_passed, block_number, STAKE_PASS_NUMERATOR, STAKE_PASS_DENOMINATOR);
 			// info!("VOTE PASSED for block #{}? {:?}", block_number, vote_passed);
 			voting_string.push_str(&format!("\t❔VOTE PASSED? {}\n", vote_passed));
 
@@ -212,6 +214,16 @@ impl<'a> VoteResultManager {
 					warn!("Unable to write vote result too network_client_tx channel: {:?}", e)
 				}
 			}
+
+			debug!(
+				"Participation: {}/{} ({}%) required, {}/{} ({}%) approved",
+				votes.len(),
+				validators.len(),
+				(votes.len() as f64 / validators.len() as f64) * 100.0,
+				total_favoured_stake,
+				total_voted_stake,
+				stake_ratio * 100.0
+			);
 
 			return Ok(Some(vote_result))
 		} else {
@@ -308,14 +320,13 @@ impl<'a> VoteResultManager {
 	}
 
 	fn get_unique_votes(votes: &Vec<Vote>) -> Vec<Vote> {
-		debug!("get_unique_votes ~ Votes Length: {:?}", votes.len());
-		let mut unique_votes = HashMap::with_capacity(votes.len());
+		let mut unique_votes = HashMap::new();
 		votes.iter().for_each(|vote| {
-			debug!("get_unique_votes ~ Vote ~ Validator address: {:?}", hex::encode(vote.validator_address));
-			unique_votes.insert(&vote.verifying_key, vote);
+			// Use both address and key for collision protection
+			let key = (vote.validator_address, &vote.verifying_key[..8]);
+			unique_votes.entry(key).or_insert(vote.clone());
 		});
-		
-		unique_votes.into_iter().map(|(_, vote)| vote.clone()).collect::<Vec<Vote>>()
+		unique_votes.into_values().collect()
 	}
 
 	// fn is_passed(all_votes: &Vec<Vote>, validators: Vec<Validator>, min_passed_votes: usize) -> bool {
@@ -336,10 +347,25 @@ impl<'a> VoteResultManager {
 		validators: Vec<Validator>,
 		min_participation_count: usize
 	) -> Result<bool, Error> {
-		
+		// Get block number from votes (all votes should be for same block)
+		let block_number = all_votes.first()
+			.map(|v| v.data.block_number)
+			.unwrap_or(0); // Default to genesis if empty (should never happen)
+
+		debug!(
+			"Vote evaluation for block #{}\n\
+			\tTotal validators: {}\n\
+			\tMinimum participation: {}\n\
+			\tUnique votes received: {}",
+			block_number,
+			validators.len(),
+			min_participation_count,
+			all_votes.len()
+		);
+
 		// Get runtime config and stacking info for all nodes
 		let rt_config:Arc<RuntimeConfigCache> = RuntimeConfigCache::get().await?;
-		let stacking_info:Arc<RuntimeStakingInfoCache> = RuntimeStakingInfoCache::get().await?;
+		let staking_info:Arc<RuntimeStakingInfoCache> = RuntimeStakingInfoCache::get().await?;
 		let min_stake_amount = rt_config.stake_score.min_balance;
 
 		// 1. Filter to only votes from valid validators
@@ -367,7 +393,7 @@ impl<'a> VoteResultManager {
 			}
 			
 			// For non-org nodes, check actual stake balance
-			match stacking_info.nodes.get(validator_address) {
+			match staking_info.nodes.get(validator_address) {
 				Some(stake) if stake.staked_balance >= min_stake_amount => {
 					debug!("is_passed ~ Valid stake: {} for node", stake.staked_balance);
 					stake.staked_balance as f64
@@ -384,21 +410,43 @@ impl<'a> VoteResultManager {
 		};
 	
 		let (total_voted_stake, total_yes_stake) = valid_votes.iter().fold(
-			(0.0, 0.0),
-			|(total, yes), vote| {
-				let stake = get_validator_stake(&vote.validator_address);
-				(total + stake, yes + if vote.data.vote { stake } else { 0.0 })
+			(0u128, 0u128),
+			|(mut total, mut yes), vote| {
+				// Detect org nodes using validator list markers
+				let is_org_node = validators.iter()
+					.find(|v| v.address == vote.validator_address)
+					.map(|v| v.stake == 0 && (v.xscore - 1.0).abs() < f64::EPSILON)
+					.unwrap_or(false);
+
+				let stake = if is_org_node {
+					// Use configured minimum balance for org nodes
+					rt_config.stake_score.min_balance as u128
+				} else {
+					// Regular validator stake
+					staking_info.nodes.get(&vote.validator_address)
+						.map(|s| s.staked_balance)
+						.unwrap_or(0)
+				};
+
+				total += stake;
+				if vote.data.vote {
+					yes += stake;
+				}
+				(total, yes)
 			},
 		);
-	
-		// Safer float comparison
-		let ratio = if total_voted_stake > 0.0 {
-			total_yes_stake / total_voted_stake
+
+		// Integer-based threshold check
+		let passed = if total_voted_stake == 0 {
+			false
 		} else {
-			0.0
+			total_yes_stake.checked_mul(STAKE_PASS_DENOMINATOR as u128)
+				.and_then(|y| total_voted_stake.checked_mul(STAKE_PASS_NUMERATOR as u128)
+					.map(|t| y >= t))
+				.unwrap_or(false)
 		};
-		
-		Ok(ratio > STAKE_PASS_THRESHOLD - f64::EPSILON)
+
+		Ok(passed)
 	}
 
 	pub async fn is_vote_result_passed(

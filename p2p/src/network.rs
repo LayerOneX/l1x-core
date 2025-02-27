@@ -56,6 +56,8 @@ fn serialize<D: Serialize>(data: &D) -> Result<Vec<u8>, io::Error> {
 	bincode::serialize(data).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
 }
 
+const MAX_CLOSEST_PEERS: usize = 10;
+
 // Implement Lazy Static for ACTIVE_PEERS
 lazy_static! {
 	static ref ACTIVE_PEERS: Mutex<Vec<PeerId>> = Mutex::new(Vec::new());
@@ -823,7 +825,7 @@ impl EventLoop {
 								let mut futures = FuturesUnordered::new();
 								let closest_peers = res.peers.clone();
 
-								for peer_id in res.peers.iter().take(5) { // Connect to up to 5 peers
+								for peer_id in res.peers.iter().take(MAX_CLOSEST_PEERS) { // Connect to up to 5 peers
 									let addrs = self.swarm.behaviour_mut().kademlia.addresses_of_peer(peer_id)
 										.into_iter()
 										.filter(is_public_address)

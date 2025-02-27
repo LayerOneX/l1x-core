@@ -104,21 +104,66 @@ impl<'a> ValidatorManager {
 
 		selected_validators.sort_by(|a, b| a.address.cmp(&b.address));
 
-		for org_node in &rt_config.org_nodes {
-			let validator = Validator {
-				address: org_node.clone(),
-				cluster_address: last_block_header.cluster_address,
-				epoch,
-				stake: 0, // default
-				xscore: 1.0,
-			};
-			selected_validators.push(validator);
+		for validator in &selected_validators {
+			debug!("select_validators_for_epoch ~ Before adding org nodes ~ Selected validator: {:?}", hex::encode(validator.address));
 		}
-		let max_validators = std::cmp::max(rt_config.max_validators, DEFAULT_MAX_VALIDATORS);
+
+		// Modified org node addition logic
+		let max_validators = std::cmp::max(rt_config.max_validators, DEFAULT_MAX_VALIDATORS) as usize;
+		
+		let mut needed = 0; // Declare in outer scope
+
+		if selected_validators.len() < max_validators {
+			needed = max_validators - selected_validators.len();
+			
+			// Move the debug logging inside this block
+			debug!(
+				"Initiating fallback: Adding {} org nodes from: [{}]",
+				needed,
+				rt_config.org_nodes.iter()
+					.take(needed)
+					.map(hex::encode)
+					.collect::<Vec<_>>()
+					.join(", ")
+			);
+
+			rt_config.org_nodes.iter()
+				.take(needed)
+				.for_each(|org_address| {
+					selected_validators.push(Validator {
+						address: *org_address,
+						cluster_address: last_block_header.cluster_address,
+						epoch,
+						stake: 0,  // Marker for org node
+						xscore: 1.0, // Fixed value for fallback
+					});
+				});
+			info!("Added {} org nodes as fallback", needed);
+		}
+
 		let seed = self.calculate_seed(last_block_header.block_hash, epoch);
 		let mut rng = StdRng::seed_from_u64(seed);
 
 		let (selected_validators, _) = selected_validators.partial_shuffle(&mut rng, max_validators as usize);
+
+		// After initial selection
+		debug!(
+			"Selected {} external validators: [{}]",
+			selected_validators.len(),
+			selected_validators.iter()
+				.map(|v| hex::encode(v.address))
+				.collect::<Vec<_>>()
+				.join(", ")
+		);
+
+		// Final validator list
+		info!(
+			"Final validator set ({}/{}): {} external, {} fallback",
+			selected_validators.len(),
+			max_validators,
+			selected_validators.len().saturating_sub(needed),
+			needed,
+		);
 
 		Ok(selected_validators.into())
 	}

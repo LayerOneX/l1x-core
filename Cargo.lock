@@ -1798,7 +1798,7 @@ checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
 
 [[package]]
 name = "cli"
-version = "2.4.4"
+version = "2.4.5"
 dependencies = [
  "anyhow",
  "clap 4.5.23",
@@ -5116,7 +5116,7 @@ checksum = "3c0e08f81969ff2ec40053cc7f2e534a9a6f9a5bf03c03b99a9c2c85755d37bb"
 
 [[package]]
 name = "l1x-vm-cli"
-version = "2.4.4"
+version = "2.4.5"
 dependencies = [
  "anyhow",
  "clap 4.5.23",
@@ -6419,7 +6419,7 @@ dependencies = [
 
 [[package]]
 name = "node"
-version = "2.4.4"
+version = "2.4.5"
 dependencies = [
  "account",
  "anyhow",
@@ -7913,7 +7913,7 @@ checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
 name = "relayer"
-version = "2.4.4"
+version = "2.4.5"
 dependencies = [
  "ethers",
  "log",
@@ -8673,7 +8673,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "2.4.4"
+version = "2.4.5"
 dependencies = [
  "account",
  "alloy-dyn-abi",
