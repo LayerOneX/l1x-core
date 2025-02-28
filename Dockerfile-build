@@ -11,4 +11,4 @@ RUN apt-get update && \
 RUN rustup default stable && rustup component add rustfmt && rustup component add clippy
 
 # Execute the script when the container starts
-CMD ["sleep","infinity"]
+CMD ["/bin/bash", "-c", "cargo clean && cargo build --release"]

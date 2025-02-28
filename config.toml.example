@@ -1,5 +1,5 @@
-dev_mode = true
-multinode_mode = false
+dev_mode = false
+multinode_mode = true
 replication_enable = false # make true for production
 max_size = 100
 fee_limit = 9_223_372_036_854_775_807
@@ -22,7 +22,8 @@ rpc_disable_estimate_fee = false
  node_address = "[NODE_ADDRESS]"
  node_metadata = "metadata"
  cluster_address = "0101010101010101010101010101010101010101"
- boot_nodes = ["[BOOT_NODE_ADDRESS]"] # addresses of the boot node. Eg:"/ip4/3.254.147.238/tcp/5010/p2p/16Uiu2HAm5cnMkuwwmNyNdHNzxvhtHxKQ1xJtF7zb5Fpm9zbe7qmm"
+ boot_nodes = ["/ip4/13.38.143.38/tcp/5010/p2p/16Uiu2HAmHeonuUUAuKEFFw5GVX5JmdnK6ExvQ4GXN5UuCAirbpTd","/ip4/52.14.200.243/tcp/5010/p2p/16Uiu2HAkwig2bUtpQPJyHANEoYHLKqGnweEeCiyNYHtVPbCjxgPt","/ip4/54.245.89.49/tcp/5010/p2p/16Uiu2HAmToePh
+yjpafK29UohyJiQVofZdjzch7QCYwpnNUBFwup3"] # addresses of the boot node. Eg:"/ip4/3.254.147.238/tcp/5010/p2p/16Uiu2HAm5cnMkuwwmNyNdHNzxvhtHxKQ1xJtF7zb5Fpm9zbe7qmm"
  
  archive_nodes = [] # DEPRECATED: 
  archive_snapshot_sources = ['https://v2-mainnet-archive.l1x.foundation/'] # base url of Snapshot source, which will be used to download the database dump eg: https://archive-snapshots.l1x.foundation/
@@ -37,8 +38,8 @@ rpc_disable_estimate_fee = false
 
 [db.postgres]
 host = "127.0.0.1:5432"
-username = "postgres"
-password = "postgres"
+username = "admin"
+password = "admin"
 pool_size = 10
 db_name = "l1x"
 test_db_name = "l1x_test" # optional
