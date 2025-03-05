@@ -1,9 +1,5 @@
-org_nodes = ["21f05ed3e1be2b2067a251125fef50db2f97f91a", "caaa9106183068622d3db91c67562811a320653b", "3601A15113de899599e2A437e4e3cCfeD0C1fC04"]
 dev_mode = false
 multinode_mode = true
-wb_lists_check = false
-whitelist_source = "whitelist_config.json"
-blacklist_source = "blacklist_config.json"
 replication_enable = false # make true for production
 max_size = 5000
 fee_limit = 1800000000000000000
