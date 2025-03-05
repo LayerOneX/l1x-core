@@ -20,7 +20,7 @@ fi
 if [ -d "l1x_data/l1x" ]; then
     # Announce server startup
     echo "Starting L1X Core Node"
-    RUST_LOG=info ./server update-node-info
+    RUST_LOG=info ./l1x_core_node update-node-info
     
     # Start the server with RUST_LOG set to "info" for logging
     RUST_LOG=info ./l1x_core_node start -w "l1x_data/l1x"
