@@ -15,7 +15,7 @@ use system::block::{Block, BlockSignPayload};
 use system::block_header::BlockHeader;
 use system::transaction::{Transaction, TransactionType};
 use execute::execute_fee;
-use log::info;
+use log::debug;
 pub struct ValidateBlock {}
 
 impl<'a> ValidateBlock {
@@ -78,8 +78,13 @@ impl<'a> ValidateBlock {
 		let eligible_validators_for_reward =
 			get_eligible_validators_for_reward(last_block_votes_validators.clone(), db_pool_conn).await?;
 
-		info!("eligible_validators_for_reward: {:?}", eligible_validators_for_reward);
-		info!("last_block_votes_validators: {:?}", last_block_votes_validators);
+		for validator in eligible_validators_for_reward.iter() {
+			debug!("validate_proposed_block ~ get_eligible_validators_for_reward ~ validator: {:?}", hex::encode(validator));
+		}
+
+		for validator in last_block_votes_validators.iter() {
+			debug!("validate_proposed_block ~ last_block_votes_validators ~ validator: {:?}", hex::encode(validator));
+		}
 		
 		// Validate block header and transactions
 		validate_block_header_and_transactions(&block_payload, db_pool_conn, cluster_address, Some(eligible_validators_for_reward)).await?;
