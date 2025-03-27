@@ -15,6 +15,7 @@ use system::{account::Account, block::Block, block_header::BlockHeader, network:
 use tokio::sync::{broadcast, Mutex};
 use system::transaction::{TransactionMetadata, TransactionResult};
 use crate::execute_token::ExecuteToken;
+use block::block_manager::BlockManagerCache;
 
 macro_rules! continue_on_error {
 	($expr:expr) => {
@@ -297,6 +298,11 @@ impl<'a> ExecuteBlock {
 													)
 													.await
 												};
+
+												// Update the last executed block number and current epoch
+												let block_manager_cache = BlockManagerCache::get_instance();
+												block_manager_cache.set_last_executed_block_header(block.block_header.clone()).await?;
+
 												result
 											})
 									})
@@ -363,6 +369,11 @@ impl<'a> ExecuteBlock {
 													)
 													.await
 												};
+
+												// Update the last executed block number and current epoch
+												let block_manager_cache = BlockManagerCache::get_instance();
+												block_manager_cache.set_last_executed_block_header(block.block_header.clone()).await?;
+												
 												result
 											})
 									})

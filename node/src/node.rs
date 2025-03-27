@@ -18,7 +18,18 @@ use std::{
 use std::str::FromStr;
 use anyhow::Error;
 use system::{
-	account::Account, block::{Block, BlockBroadcast, BlockQueryRequest, L1xResponse, QueryBlockResponse}, block_proposer::BlockProposerBroadcast, dht_health_storage::DHTHealthStorage, mempool::{ProcessMempool, ResponseMempool}, network::{BroadcastNetwork, EventBroadcast, NetworkMessage}, node_health::{NodeHealthBroadcast, AggregatedNodeHealthBroadcast}, node_info::{NodeInfoBroadcast, NodeInfoSignPayload}, transaction::TransactionBroadcast, vote::VoteBroadcast, vote_result::VoteResultBroadcast
+	account::Account, 
+	block::{Block, BlockBroadcast, BlockQueryRequest, L1xResponse, QueryBlockResponse}, 
+	block_proposer::BlockProposerBroadcast, 
+	dht_health_storage::DHTHealthStorage, 
+	mempool::{ProcessMempool, ResponseMempool}, 
+	network::{BroadcastNetwork, EventBroadcast, NetworkMessage}, 
+	node_health::{AggregatedNodeHealthBroadcast, NodeHealthBroadcast}, 
+	node_info::{NodeInfoBroadcast, NodeInfoSignPayload}, 
+	transaction::TransactionBroadcast, 
+	vote::VoteBroadcast, 
+	vote_result::VoteResultBroadcast,
+	block::BroadcastNodeDetailedStatus
 };
 use tokio::{
 	sync::{broadcast, mpsc, Mutex},
@@ -480,17 +491,13 @@ impl <'a> FullNode {
 				broadcast_node_info(&node_address, &db_pool_conn, network_client_tx).await;
 
 				// Start node health monitoring
-				network_client.start_node_health_monitoring(
+				network_client.init_node_monitoring(
 					cluster_address.clone(),
+					latest_epoch,
+					peer_id.clone(),
 				).await.expect("Failed to start node health monitoring");
 
-				// Start node monitoring
-				network_client.start_node_monitoring()
-					.await
-					.expect("Failed to start node monitoring");
-
-				// Start ping eligible peers
-				network_client.start_ping_eligible_peers(latest_epoch).await;
+			
 			}
 
 			(full_node, mempool_res_rx)
@@ -713,6 +720,23 @@ impl <'a> FullNode {
 						},
 						Event::InitializePeers => {
 							debug!("Received Event::InitializePeers event");
+						},
+						Event::PublishNodeDetailedStatus { peer_id } => {
+							if let Err(e) = network_receive_tx
+								.send(NetworkMessage::NetworkEvent(NetworkEventType::PublishNodeDetailedStatus(peer_id)))
+								.await
+							{
+								warn!("Unable to write detailed status request to network_receive_tx channel: {:?}", e)
+							}
+						},
+						Event::InboundNodeDetailedStatus(node_detailed_status) => {
+							debug!("ID: NODE_DETAILED_STATUS, Received Event::InboundNodeDetailedStatus event: {:?}", node_detailed_status.clone());
+							if let Err(e) = network_receive_tx
+								.send(NetworkMessage::NetworkEvent(NetworkEventType::ReceiveNodeDetailedStatus(node_detailed_status)))
+								.await
+							{
+								warn!("Unable to write detailed status response to network_receive_tx channel: {:?}", e)
+							}
 						}
 					}
 				},
@@ -965,6 +989,11 @@ impl <'a> FullNode {
 						},
 					};
 				},
+				ProcessMempool::GetSize(sender) => {
+					if let Err(e) = sender.send(mempool.transactions_priority.len()) {
+						error!("Unable to write size to mempool_res_tx channel: {:?}", e);
+					}
+				}
 			}
 		}
 
@@ -1160,6 +1189,14 @@ impl <'a> FullNode {
 						},
 					};
 				},
+				BroadcastNetwork::BroadcastNodeDetailedStatus(node_detailed_status) => {
+					match network_client.broadcast_node_detailed_status(node_detailed_status).await {
+						Ok(_) => {},
+						Err(e) => {
+							warn!("Unable to broadcast node detailed status: {:?}", e);
+						},
+					};
+				},
 			}
 		}
 
@@ -1347,6 +1384,26 @@ impl <'a> FullNode {
 					},
 				};
 			},
+			NetworkEventType::PublishNodeDetailedStatus(peer_id) => {
+				match consensus.handle_publish_node_detailed_status(peer_id).await {
+					Ok(_res) => {
+						log::info!("NetworkEventType::PublishNodeDetailedStatus > publish node detailed status");
+					},
+					Err(e) => {
+						warn!("NetworkEventType::QueryNodeDetailedStatus > Failed to request node detailed status: {:?}", e);
+					},
+				};
+			},
+			NetworkEventType::ReceiveNodeDetailedStatus(node_detailed_status) => {
+				match consensus.handle_receive_node_detailed_status(node_detailed_status.clone()).await {
+					Ok(_res) => {
+						log::info!("ID: NODE_DETAILED_STATUS, NetworkEventType::ReceiveNodeDetailedStatus > receive node detailed status, node_detailed_status: {:?}", node_detailed_status.clone());
+					},
+					Err(e) => {
+						warn!("ID: NODE_DETAILED_STATUS, NetworkEventType::ReceiveNodeDetailedStatus > Failed to receive node detailed status: {:?}", e);
+					},
+				};
+			},
 		}
 	}
 }
@@ -1489,52 +1546,99 @@ pub async fn update_genesis_block(
     Err(anyhow::anyhow!("Failed to update genesis block from any bootnode"))
 }
 
+// Add constants for configurability
+const HEALTH_SYNC_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_RETRIES: u32 = 2;
+const FALLBACK_EPOCH_LIMIT: u64 = 3; // Max epochs to look back
+
 pub async fn update_node_healths(
 	bootnodes: &[&str],
 	epoch: Epoch,
 ) -> Result<(), Error> {
 	let grpc_clients = grpc_connect_bootnodes(bootnodes).await?;
-
 	let db_pool_conn = Database::get_pool_connection().await?;
-	let node_health_state = NodeHealthState::new(&db_pool_conn).await?;
-	// Update existing node info
+	let node_health_state = Arc::new(NodeHealthState::new(&db_pool_conn).await?);
+
 	for client_mutex in &grpc_clients {
 		let mut client_guard = client_mutex.lock().await;
 		let (grpc_client, endpoint) = &mut *client_guard;
 
-		let request = l1x_rpc::rpc_model::GetNodeHealthsRequest { epoch };
+		let endpoint_clone = endpoint.clone();
+		let nhs_clone = Arc::clone(&node_health_state); // Clone the state handler
 
-		match grpc_client.get_node_healths(request).await {
-			Ok(response) => {
-				let node_healths = response.into_inner().node_healths;
-				for rpc_node_health in node_healths {
-					let system_node_health = convert_to_system_node_health(rpc_node_health)?;
-					node_health_state.upsert_node_health(&system_node_health).await?;
-					info!("Updated/Added node health for peer_id: {}, epoch: {}", system_node_health.measured_peer_id, system_node_health.epoch);
-					break;
-				}
-			},
-			Err(_e) =>  {
-				// request for previous epoch if current epoch's nod health is not available
-				let request = l1x_rpc::rpc_model::GetNodeHealthsRequest { epoch: epoch -1 };
-				match grpc_client.get_node_healths(request).await {
-					Ok(response) => {
-						for rpc_node_health in response.into_inner().node_healths {
-							let system_node_health = convert_to_system_node_health(rpc_node_health)?;
-							node_health_state.upsert_node_health(&system_node_health).await?;
-							info!("Updated/Added node health for peer_id: {}, epoch: {}", system_node_health.measured_peer_id, system_node_health.epoch);
-							break;
+		// Helper for processing health entries
+		let process_healths = |healths: Vec<l1x_rpc::rpc_model::NodeHealth>| async move {
+			let mut last_error = None;
+			let mut processed = 0;
+
+			let health_count = healths.len();
+			
+			for rpc_node_health in healths {
+				match convert_to_system_node_health(rpc_node_health) {
+					Ok(system_node_health) => {
+						if let Err(e) = nhs_clone.upsert_node_health(&system_node_health).await {
+							last_error = Some(e.to_string());
+							warn!("Partial failure updating {}: {}", system_node_health.measured_peer_id, e);
+						} else {
+							processed += 1;
 						}
 					},
-					Err(e) => {
-						warn!("Failed to get all node info from {}: {}", endpoint, e);
-						continue;
-					},
+					Err(e) => warn!("Invalid health data from {}: {}", endpoint.clone(), e),
 				}
+			}
+			
+			info!("Processed {}/{} entries from {}", processed, health_count, endpoint);
+			last_error
+				.map(|e| Err(anyhow::anyhow!(e)))  // Convert String to anyhow::Error
+				.unwrap_or(Ok(()))
+		};
+
+		// Retry with jittered backoff
+		let mut attempt = 0;
+		let mut response: Result<Option<Vec<l1x_rpc::rpc_model::NodeHealth>>, Error> = Ok(None);
+		while attempt <= MAX_RETRIES {
+			let delay = if attempt > 0 {
+				let jitter = rand::random::<u64>() % 500;
+				let delay_ms = (2u64.pow(attempt - 1) * 1000) + jitter;
+				tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+			} else {
+				futures::future::ready(()).await
+			};
+
+			match tokio::time::timeout(
+				HEALTH_SYNC_TIMEOUT,
+				grpc_client.get_node_healths(l1x_rpc::rpc_model::GetNodeHealthsRequest { epoch })
+			).await {
+				Ok(Ok(res)) => {
+					response = Ok(Some(res.into_inner().node_healths));
+					break;
+				},
+				Ok(Err(e)) => warn!("Attempt {} failed: {}", attempt, e),
+				Err(_) => warn!("Timeout on attempt {}", attempt),
+			}
+			
+			attempt += 1;
+		}
+
+		// Handle successful response
+		if let Ok(Some(healths)) = response {
+			process_healths(healths).await?;
+			continue;
+		}
+
+		// Fallback to previous epochs with freshness check
+		if epoch > 0 && (epoch.saturating_sub(FALLBACK_EPOCH_LIMIT)) < epoch {
+			let fallback_epoch = epoch - 1;
+			warn!("Falling back to epoch {} for {}", fallback_epoch, endpoint_clone);
+			
+			if let Ok(prev_response) = grpc_client.get_node_healths(
+				l1x_rpc::rpc_model::GetNodeHealthsRequest { epoch: fallback_epoch }
+			).await {
+				process_healths(prev_response.into_inner().node_healths).await?;
 			}
 		}
 	}
-
+	
 	Ok(())
 }
 
@@ -1664,6 +1768,9 @@ async fn try_initialize_runtime_configs(cluster_address: Address) -> Result<(), 
 pub async fn grpc_connect_bootnodes(
 	bootnodes: &[&str],
 ) -> Result<Vec<Arc<Mutex<(NodeClient<tonic::transport::Channel>, String)>>>, Error> {
+
+	info!("node ~ grpc_connect_bootnodes ~ bootnodes: {:?}", bootnodes);
+
 	let sync_endpoints = multiaddrs_to_http_urls(bootnodes);
 	let mut grpc_clients = Vec::new();
 

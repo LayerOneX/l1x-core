@@ -1,6 +1,6 @@
 use std::error::Error;
 use crate::{
-	block::{BlockPayload, L1xResponse, QueryBlockMessage}, block_proposer::{BlockProposerPayload}, node_health::{NodeHealthPayload}, transaction::Transaction, vote::Vote, vote_result::VoteResult
+	block::{BlockPayload, L1xResponse, QueryBlockMessage}, block_proposer::BlockProposerPayload, node_health::NodeHealthPayload, node_status::NodeDetailedStatus, transaction::Transaction, vote::Vote, vote_result::VoteResult
 };
 use primitive_types::{H160, H256};
 use primitives::*;
@@ -24,6 +24,7 @@ pub enum BroadcastNetwork {
 	BroadcastSignedNodeHealth(Vec<NodeHealthPayload>),
 	BroadcastNodeHealth(Vec<NodeHealth>),
 	BroadcastQueryNodeStatusRequest(TimeStamp, PeerId),
+	BroadcastNodeDetailedStatus(NodeDetailedStatus),
 }
 
 #[derive(Debug)]
@@ -48,6 +49,8 @@ pub enum NetworkEventType {
 	PingResult(String, bool, u64), // peer_id, is_success, rtt
 	PingEligiblePeers(Epoch, Vec<String>),
 	CheckNodeStatus,
+	PublishNodeDetailedStatus(String),
+	ReceiveNodeDetailedStatus(NodeDetailedStatus),
 }
 
 #[derive(Debug)]

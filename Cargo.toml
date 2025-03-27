@@ -55,11 +55,11 @@ members = [
 ]
 
 [workspace.package]
-version = "2.4.5"
+version = "2.4.6"
 license = "Polyform-Perimeter-1.0.0"
 
 [workspace.dependencies]
-l1x-rpc = { git = 'https://github.com/L1X-Foundation-Consensus/l1x-rpc.git', rev = "v0.5.0" }
+l1x-rpc = { git = 'https://github.com/L1X-Foundation-Consensus/l1x-rpc.git', rev = "v0.5.4" }
 
 anyhow = "1.0"
 hex = "0.4"

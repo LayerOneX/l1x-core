@@ -2,7 +2,7 @@ use std::str::FromStr;
 use ::account::account_state::AccountState;
 use anyhow::{anyhow, Error};
 use block::block_state::BlockState;
-use compile_time_config::SYSTEM_CONTRACTS_OWNER;
+use compile_time_config::{MAX_SYNC_BLOCK_DIFF, SYSTEM_CONTRACTS_OWNER};
 use db::db::{Database, DbTxConn};
 use execute::execute_block::ExecuteBlock;
 use l1x_rpc::rpc_model::{node_client::NodeClient, GetLatestBlocksRequest,
@@ -256,6 +256,12 @@ pub async fn sync_node(
     if highest_local_executed_block >= chain_last_executed_block {
         info!("🎉 The local chain is up-to-date");
         return Ok(())
+    }
+
+    // Check if the local chain is behind the remote chain by more than MAX_SYNC_BLOCK_DIFF
+    if  chain_last_executed_block - highest_local_executed_block > MAX_SYNC_BLOCK_DIFF {
+        error!("🚨🚨🚨 The local chain is behind the remote chain by more than {} blocks, Kindly apply the snapshot first to catch up with the chain", MAX_SYNC_BLOCK_DIFF);
+        return Err(anyhow!("The local chain is behind the remote chain by more than {} blocks", MAX_SYNC_BLOCK_DIFF));
     }
 
     let start_execute_block_number = highest_local_executed_block + 1;

@@ -7,3 +7,4 @@ pub const VOTE_TOPIC: &str = "vote";
 pub const VOTE_RESULT_TOPIC: &str = "vote_result";
 pub const NODE_HEALTH_TOPIC: &str = "node_health";
 pub const AGGREGATED_NODE_HEALTH_TOPIC: &str = "aggregate_node_health";
+pub const BROADCAST_NODE_DETAILED_STATUS_TOPIC: &str = "broadcast_node_detailed_status";

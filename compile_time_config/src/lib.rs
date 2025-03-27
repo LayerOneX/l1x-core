@@ -20,6 +20,24 @@ pub const EVM_GAS_PRICE: Balance = 7000; // 7000 Gas for 1 nanoL1X, Not used.
 pub const SYSTEM_CONTRACTS_OWNER: Address = hex!("ff00000000000000000000000000000000000000");
 pub const SYSTEM_REWARDS_DISTRIBUTOR: Address = hex!("ff00000000000000000000000000000000000001");
 
+pub const MAX_SYNC_BLOCK_DIFF: u128 = 7000; // 7000 blocks
+
+pub const MAX_BLOCK_DIFF: u64 = 50; // 50 blocks for Validator selection
+pub mod voting_config {
+	pub const VOTE_THRESHOLD: f64 = 0.60; // 60%
+	pub const STAKE_PASS_NUMERATOR: u64 = 60;
+	pub const STAKE_PASS_DENOMINATOR: u64 = 100;
+	pub const BLOCK_EXPIRATION_TIME: u128 = 20_000; // 30 seconds
+
+	pub const PHASE_1_TIMEOUT: u128 = 10_000;  // 10 seconds
+	pub const PHASE_2_TIMEOUT: u128 = 15_000;  // 15 seconds
+	pub const PHASE_3_TIMEOUT: u128 = 20_000;  // 20 seconds
+
+	// Threshold reduction factors (applied to VOTE_THRESHOLD)
+	pub const PHASE_2_THRESHOLD_FACTOR: f64 = 0.8;  // 80% of normal threshold (56% if VOTE_THRESHOLD is 70%)
+	pub const PHASE_4_THRESHOLD_FACTOR: f64 = 0.8;  // 80% of normal threshold (56% if VOTE_THRESHOLD is 70%)
+}
+
 mod mainnet_config {
 	use hex_literal::hex;
 	use primitives::Address;

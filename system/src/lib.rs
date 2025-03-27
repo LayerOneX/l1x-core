@@ -26,6 +26,7 @@ pub mod vm_result;
 pub mod vote;
 pub mod vote_result;
 pub mod node_health;
+pub mod node_status;
 // pub mod zkp_manager;
 pub mod performance_metrics;
 pub mod dht_health_storage;

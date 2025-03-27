@@ -14,8 +14,46 @@ use system::{
 };
 use util::generic::current_timestamp_in_secs;
 use compile_time_config::{BLOCK_VERSION, config::SLOTS_PER_EPOCH};
+use lazy_static::lazy_static;
+use parking_lot::RwLock;
+use std::sync::Arc;
 
+lazy_static! {
+	static ref BLOCK_MANAGER_CACHE: Arc<BlockManagerCache> = Arc::new(BlockManagerCache::new_internal());
+}
 
+pub struct BlockManagerCache {
+	last_executed_block_header: RwLock<BlockHeader>,
+}
+
+impl BlockManagerCache {
+
+	fn new_internal() -> Self {
+		Self {
+			last_executed_block_header: RwLock::new(BlockHeader::default()),
+		}
+	}
+
+	// pub fn new() -> Arc<Self> {
+	// 	BLOCK_MANAGER_CACHE.clone()
+	// }
+
+	pub fn get_instance() -> &'static Arc<Self> {
+		&BLOCK_MANAGER_CACHE
+	}
+
+	pub async fn set_last_executed_block_header(&self, last_executed_block_header: BlockHeader) -> Result<(), Error> {
+		let mut last_executed_block_header_guard = self.last_executed_block_header.write();
+		*last_executed_block_header_guard = last_executed_block_header.clone();
+		log::debug!("Last executed block header set to: {:?}", last_executed_block_header);
+		Ok(())
+	}
+
+	pub async fn get_last_executed_block_header(&self) -> Result<BlockHeader, Error> {
+		let last_executed_block_header_guard = self.last_executed_block_header.read();
+		Ok(last_executed_block_header_guard.clone())
+	}
+}
 /// Manages the creation of new blocks and provides methods for block-related operations.
 pub struct BlockManager;
 

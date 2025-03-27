@@ -177,7 +177,7 @@ impl<'a> BlockState for StatePg<'a> {
 						block_hash: blockhash,
 					})
 				} else {
-					println!("No matching records found for cluster address ");
+					println!("No matching records found for cluster address {:?} ", hex::encode(cluster_addr));
 					Ok(ChainState {
 						cluster_address: cluster_addr,
 						block_number: 0,

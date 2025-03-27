@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+p2p = { package = 'p2p', path = '../p2p', default-features = false }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 clap = { version = "4.4.8", features = ["derive"] }
@@ -104,6 +105,7 @@ tokio-util = "0.7.8"
 dns-lookup = "2.0.4"
 regex = "1.10.2"
 moka = "0.11.3"
+futures = "0.3.29"
 
 [dev-dependencies]
 mockall = "0.11.4"

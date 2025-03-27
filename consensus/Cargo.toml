@@ -11,6 +11,7 @@ mempool = { package = 'mempool', path = '../mempool', default-features = false }
 cluster = { package = 'cluster', path = '../cluster', default-features = false }
 account = { package = 'account', path = '../account', default-features = false }
 system = { package = 'system', path = '../system', default-features = false }
+p2p = { package = 'p2p', path = '../p2p', default-features = false }
 validate = { package = 'validate', path = '../validate', default-features = false }
 block-proposer = { package = 'block_proposer', path = '../block_proposer', default-features = false }
 vote = { package = 'vote', path = '../vote', default-features = false }

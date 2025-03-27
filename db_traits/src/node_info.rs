@@ -14,7 +14,7 @@ pub trait NodeInfoState {
 		&self,
 		address: &Address,
 	) -> Result<(Option<Address>, Option<NodeInfo>), Error>;
-	async fn find_node_info_by_node_id(&self, node_id: Vec<u8>) -> Result<NodeInfo, Error>;
+	async fn find_node_info_by_peer_id(&self, peer_id: &str) -> Result<NodeInfo, Error>;
 	async fn load_node_info(&self, address: &Address) -> Result<NodeInfo, Error>;
 	async fn load_nodes(
 		&self,

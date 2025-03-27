@@ -1,3 +1,4 @@
+debug.log
 /keystore
 /target
 **/target
@@ -102,6 +103,7 @@ l1x_node.env
 coverage
 /cli/node_modules
 
+debug.log
 chain_data/*
 config.toml
 update.txt

@@ -13,6 +13,7 @@ use crate::eth::bytes::Bytes;
 use ethereum::TransactionV2 as EthereumTransaction;
 use ethereum_types::H160;
 use serde::{de::Error, Deserialize, Deserializer};
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize)]
 pub(crate) struct CallOrInputData {
 	data: Option<Bytes>,
@@ -41,4 +42,3 @@ pub(crate) fn deserialize_data_or_input<'d, D: Deserializer<'d>>(
 pub trait BuildFrom {
 	fn build_from(from: H160, transaction: &EthereumTransaction) -> Self;
 }
-

@@ -56,7 +56,7 @@ impl NodeInfoState for StateRock {
 		Ok((None, None))
 	}
 	
-	async fn find_node_info_by_node_id(&self, _node_id: Vec<u8>) -> Result<NodeInfo, Error> {
+	async fn find_node_info_by_peer_id(&self, _node_id: &str) -> Result<NodeInfo, Error> {
 		todo!()
 	}
 

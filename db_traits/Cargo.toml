@@ -13,6 +13,7 @@ system = { package = 'system', path = '../system', default-features = false }
 l1x-rpc = { workspace = true }
 ethers = { version = "2.0.8", features = ["ws", "rustls"] }
 types = { package = 'types', path = '../types', default-features = false }
+db = { package = 'db', path = '../db', default-features = false }
 
 [lints]
 workspace = true

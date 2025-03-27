@@ -117,6 +117,14 @@ impl<'a> NodeInfoState<'a> {
 		}
 	}
 
+	pub async fn find_node_info_by_peer_id(&self, peer_id: &str) -> Result<NodeInfo, Error> {
+		match &*self.state {
+			StateInternalImpl::StateRock(s) => s.find_node_info_by_peer_id(peer_id).await,
+			StateInternalImpl::StatePg(s) => s.find_node_info_by_peer_id(peer_id).await,
+			StateInternalImpl::StateCas(s) => s.find_node_info_by_peer_id(peer_id).await,
+		}
+	}
+
 	pub async fn load_node_info(&self, address: &Address) -> Result<NodeInfo, Error> {
 		// First, check the temporary cache
 		if let Some(node_info) = self.temp_cache.read().await.get(address) {

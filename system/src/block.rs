@@ -1,6 +1,5 @@
 use crate::{
-	block_header::BlockHeader, transaction::Transaction,
-	transaction_receipt::TransactionReceiptResponse,
+	block_header::BlockHeader, node_status::NodeDetailedStatus, transaction::Transaction, transaction_receipt::TransactionReceiptResponse
 };
 use anyhow::{anyhow, Error as AError};
 use async_trait::async_trait;
@@ -167,6 +166,7 @@ pub enum L1xResponse {
     },
     QueryBlockError(String),
 	QueryNodeStatus(String, TimeStamp),
+	QueryNodeDetailedStatus(NodeDetailedStatus),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -269,4 +269,12 @@ pub trait QueryStatusRequest {
 		request_time: u128,
 		peer_id: PeerId,
 	) -> Result<RequestId, Box<dyn Error + Send>>;
+}
+
+#[async_trait]
+pub trait BroadcastNodeDetailedStatus {
+	async fn broadcast_node_detailed_status(
+		&self,
+		node_detailed_status: NodeDetailedStatus,
+	) -> Result<MessageId, Box<dyn Error + Send>>;
 }

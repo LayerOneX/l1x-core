@@ -31,7 +31,7 @@ use l1x_rpc::rpc_model::{self, estimate_fee_request::TransactionType as gRPCEsti
 						 GetValidatorsForEpochRequest, GetValidatorsForEpochResponse, ValidatorsForEpoch,
 						 GetBlockInfoRequest, GetBlockInfoResponse, BlockInfo, ValidatorDetail, GetRuntimeConfigRequest,
 						 GetRuntimeConfigResponse, GetBlockWithDetailsByNumberRequest, GetBlockWithDetailsByNumberResponse,
-						 VoteResultShort, ValidatorShort,
+						 VoteResultShort, ValidatorShort, GetActivePeersRequest, GetActivePeersResponse,
 };
 use l1x_vrf::common::get_signature_from_bytes;
 use log::{debug, error, info};
@@ -64,6 +64,8 @@ use block_proposer::block_proposer_state::BlockProposerState;
 use l1x_node_health::NodeHealthState;
 use system::block::BlockType;
 use vote_result::vote_result_state::VoteResultState;
+use p2p::network::NetworkState;
+
 
 pub type SubmitTransactionStream =
 	tokio_stream::wrappers::ReceiverStream<Result<SubmitTransactionResponse, Status>>;
@@ -1866,6 +1868,29 @@ impl FullNodeService {
 		};
 
 		Ok(response)
+	}
+
+	pub async fn get_active_peers(
+		&self,
+		_request: GetActivePeersRequest,
+	) -> Result<GetActivePeersResponse, NodeError> {
+		let network_state = NetworkState::get_instance();
+		let active_peers = network_state.get_available_peers_with_info().await.map_err(|e| {
+			NodeError::EventFetchError(format!("Failed to get active peers: {}", e))
+		})?;
+
+		let converted_peers: Vec<l1x_rpc::rpc_model::ActivePeerInfo> = active_peers
+			.iter()
+			.map(|peer| l1x_rpc::rpc_model::ActivePeerInfo {
+				peer_id: peer.peer_id.to_string(),
+				node_address: hex::encode(peer.address),
+				status: "online".to_string(), // TODO: add status
+				last_executed_block: peer.peer_status_info.current_block.unwrap_or_default() as u64,
+			})
+			.collect();
+		Ok(GetActivePeersResponse {
+			active_peers: converted_peers
+		})
 	}
 }
 

@@ -1,4 +1,4 @@
-use anyhow::Error;
+use anyhow::{Error};
 use async_trait::async_trait;
 use bigdecimal::{BigDecimal, ToPrimitive};
 use db::postgres::{
@@ -12,6 +12,7 @@ use primitives::Address;
 use std::collections::HashMap;
 use system::node_info::{NodeInfo, NodeInfoSignPayload};
 use util::convert::convert_to_big_decimal_epoch;
+
 
 pub struct StatePg<'a> {
 	pub(crate) pg: &'a PostgresDBConn<'a>,
@@ -168,15 +169,14 @@ impl<'a> NodeInfoState for StatePg<'a> {
 		}
 	}
 
-	async fn find_node_info_by_node_id(&self, peer_id: Vec<u8>) -> Result<NodeInfo, Error> {
-		let encode_node_id = String::from_utf8(peer_id)?;
+	async fn find_node_info_by_peer_id(&self, peer_id: &str) -> Result<NodeInfo, Error> {
 
 		let res: QueryResult<QueryNodeInfo> = match &self.pg.conn {
 			PgConnectionType::TxConn(conn) => schema::node_info::table
-				.filter(schema::node_info::dsl::peer_id.eq(encode_node_id))
+				.filter(schema::node_info::dsl::peer_id.eq(peer_id.to_string()))
 				.first(*conn.lock().await),
 			PgConnectionType::PgConn(conn) => schema::node_info::table
-				.filter(schema::node_info::dsl::peer_id.eq(encode_node_id))
+				.filter(schema::node_info::dsl::peer_id.eq(peer_id.to_string()))
 				.first(&mut *conn.lock().await),
 		};
 
@@ -223,6 +223,7 @@ impl<'a> NodeInfoState for StatePg<'a> {
 			Err(e) => return Err(anyhow::anyhow!("Diesel query for find node info by node	id failed: {}", e)),
 		}
 	}
+
 
 	async fn load_node_info(&self, address: &Address) -> Result<NodeInfo, Error> {
 		let encode_addr = hex::encode(address);

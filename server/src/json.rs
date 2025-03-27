@@ -38,7 +38,7 @@ use l1x_rpc::rpc_model::{
 	SmartContractReadOnlyCallRequest, SmartContractReadOnlyCallResponse, SubmitTransactionRequest,
 	SubmitTransactionRequestV2, SubmitTransactionResponse, GetCurrentNodeInfoRequest, GetCurrentNodeInfoResponse,
 	GetBlockInfoRequest, GetBlockInfoResponse, GetRuntimeConfigRequest, GetRuntimeConfigResponse, GetBlockWithDetailsByNumberRequest,
-	GetBlockWithDetailsByNumberResponse,
+	GetBlockWithDetailsByNumberResponse, GetActivePeersRequest, GetActivePeersResponse
 };
 use lazy_static::lazy_static;
 use log::{debug, error, info};
@@ -1469,6 +1469,8 @@ impl EvmCompatibilityServer for FullNodeJsonImpl {
 			Err(e) => Err(error_object!(&format!("{}", e)))
 		}
 	}
+
+	
 }
 
 async fn subscribe_future_events(
@@ -1580,6 +1582,14 @@ async fn subscribe_future_events(
 
 #[tonic::async_trait]
 impl FullNodeJsonServer for FullNodeJsonImpl {
+
+	async fn get_active_peers(
+		&self,
+		request: GetActivePeersRequest,
+	) -> Result<GetActivePeersResponse, ErrorObjectOwned> {
+		Ok(self.service.get_active_peers(request).await?)
+	}
+
 	async fn get_account_state(
 		&self,
 		request: GetAccountStateRequest,

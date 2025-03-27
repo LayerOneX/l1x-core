@@ -42,6 +42,9 @@ db = { package = 'db', path = '../db', default-features = false }
 node_info = { package = 'node_info', path = '../node_info', default-features = false }
 account = { package = 'account', path = '../account', default-features = false }
 compile_time_config = { package = 'compile_time_config', path = '../compile_time_config' }
+lazy_static = "1.4.0"
+parking_lot = "0.12"
+crossbeam = "0.8"
 
 [lints]
 workspace = true

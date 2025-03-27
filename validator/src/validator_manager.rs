@@ -1,18 +1,21 @@
 use compile_time_config::*;
+use libp2p::PeerId;
+use p2p::network::NetworkState;
 use runtime_config::{RuntimeConfigCache, RuntimeStakingInfoCache};
 use anyhow::Error;
 
 use db::db::DbTxConn;
-use log::{info, debug};
+use log::{debug, info, warn};
 use primitives::{Address, Epoch};
 use system::{block_header::BlockHeader, config::Config, node_health::NodeHealth, validator::Validator};
 use xscore::{kin_score::NodePerformanceMetrics, XScoreCalculator, stake_score::{NodeStakeInfo, StakeScoreCalculator}, XScoreWeights};
-use block::{block_manager::BlockManager, block_state::BlockState};
+use block::block_manager::BlockManager;
 use l1x_node_health::NodeHealthState;
 use node_info::node_info_state::NodeInfoState;
 use xscore::kin_score::KinScoreCalculator;
 use rand::{rngs::StdRng, SeedableRng, seq::SliceRandom};
 use sha2::{Sha256, Digest};
+use std::str::FromStr;
 
 pub struct ValidatorManager;
 
@@ -31,6 +34,8 @@ impl<'a> ValidatorManager {
 		let mut eligible_validators = Vec::new();
 
 		let stacking_info = RuntimeStakingInfoCache::get().await?;
+		
+		
 		for (node_address, info) in &stacking_info.nodes {
 
 			debug!("select_validators_for_epoch ~ Node address: {:?}, Staked balance: {:?}, Min pool balance: {:?}", hex::encode(node_address), info.staked_balance, info.min_pool_balance);
@@ -42,6 +47,7 @@ impl<'a> ValidatorManager {
 				continue;
 			}
 
+			// Load node info
 			let node_info = match node_info_state.load_node_info(node_address).await {
 				Ok(info) => info,
 				Err(e) => {
@@ -58,6 +64,7 @@ impl<'a> ValidatorManager {
 				continue;
 			}
 
+			// Load node health
 			let node_health = match node_health_state
 				.load_node_health(&node_info.peer_id, current_epoch)
 				.await? {
@@ -70,6 +77,7 @@ impl<'a> ValidatorManager {
 
 			debug!("select_validators_for_epoch ~ Node health: {:?}", node_health);
 
+			// Calculate xscore
 			let xscore = self
 				.calculate_xscore(node_address, last_block_header, &node_health, &db_pool_conn)
 				.await
@@ -79,6 +87,51 @@ impl<'a> ValidatorManager {
 				})?;
 				
 			info!("Required XScore: {:?}, Node XScore: {:?}, Node Address:  {:?}", rt_config.xscore.xscore_threshold.clone(), xscore, hex::encode(node_address));
+
+			// Get last executed block for the node
+			let last_executed_block = {
+				let network_state = NetworkState::get_instance();
+				let peer_id = match PeerId::from_str(&node_info.peer_id) {
+					Ok(peer_id) => peer_id,
+					Err(e) => {
+						log::error!("Error converting peer id to PeerId: {}", e);
+						continue;
+					}
+				};
+				let peer_status = match network_state.get_peer_status_info(peer_id).await {
+					Some(peer_status) => peer_status,
+					None => {
+						log::error!("Error getting peer status info");
+						continue;
+					}
+				};
+				peer_status.current_block
+			};
+
+			let is_synced_node_synced = match last_executed_block {
+				Some(height) => {
+					let block_diff = last_block_header.block_number.saturating_sub(height);
+					if block_diff <= MAX_BLOCK_DIFF.into() {
+						debug!("Validator 0x{} is within sync range ({}  blocks behind).",
+							hex::encode(node_address), block_diff);
+						true
+					} else {
+						warn!("Skipping validator 0x{} as it's {} blocks behind (max allowed: {}).",
+							hex::encode(node_address), block_diff, MAX_BLOCK_DIFF);
+						false
+					}
+				},
+				None => {
+					// Keep validators we don't have block height for
+					warn!("Cannot determine block height for validator 0x{}.",
+						hex::encode(node_address));
+					false
+				}
+			};
+
+			if !is_synced_node_synced {
+				continue;
+			}
 
 			eligible_validators.push(Validator {
 				address: *node_address,
@@ -92,80 +145,52 @@ impl<'a> ValidatorManager {
 		// Filter nodes:
 		// 1. By XScore
 		// 2. Node should be whitelisted or not blacklisted
-		let mut selected_validators: Vec<Validator> = eligible_validators.into_iter()
+		let mut selected_external_validators: Vec<Validator> = eligible_validators.into_iter()
 			.filter(|v| v.xscore > rt_config.xscore.xscore_threshold)
 			.collect();
 		// filter out validator based on whitelisted/blacklisted nodes
 		if let Some(whitelisted_nodes) = &rt_config.whitelisted_nodes {
-			selected_validators = selected_validators.into_iter().filter(|v| whitelisted_nodes.contains(&v.address)).collect();
+			selected_external_validators = selected_external_validators.into_iter().filter(|v| whitelisted_nodes.contains(&v.address)).collect();
 		} else if let Some(blacklisted_nodes) = &rt_config.blacklisted_nodes {
-			selected_validators = selected_validators.into_iter().filter(|v| !blacklisted_nodes.contains(&v.address)).collect();
+			selected_external_validators = selected_external_validators.into_iter().filter(|v| !blacklisted_nodes.contains(&v.address)).collect();
 		}
 
-		selected_validators.sort_by(|a, b| a.address.cmp(&b.address));
+		selected_external_validators.sort_by(|a, b| a.address.cmp(&b.address));
 
-		for validator in &selected_validators {
-			debug!("select_validators_for_epoch ~ Before adding org nodes ~ Selected validator: {:?}", hex::encode(validator.address));
+		
+	
+		// Take Max Validators from selected validators
+		let mut org_validators: Vec<Validator> = vec![];
+
+		// Add org nodes to the selected validators
+		for org_node in rt_config.org_nodes.iter() {
+			org_validators.push(Validator {
+				address: *org_node,
+				cluster_address: last_block_header.cluster_address,
+				epoch,
+				stake: 0,
+				xscore: 1.0,
+			});
 		}
 
+		debug!("Final selected external validators: Count: {:?}, List: {}", selected_external_validators.len(), selected_external_validators.iter().map(|v| hex::encode(v.address)).collect::<Vec<_>>().join(", "));
+		debug!("Final selected fallback org validators: Count: {:?}, List: {}", org_validators.len(), org_validators.iter().map(|v| hex::encode(v.address)).collect::<Vec<_>>().join(", "));
+		
 		// Modified org node addition logic
 		let max_validators = std::cmp::max(rt_config.max_validators, DEFAULT_MAX_VALIDATORS) as usize;
-		
-		let mut needed = 0; // Declare in outer scope
 
-		if selected_validators.len() < max_validators {
-			needed = max_validators - selected_validators.len();
-			
-			// Move the debug logging inside this block
-			debug!(
-				"Initiating fallback: Adding {} org nodes from: [{}]",
-				needed,
-				rt_config.org_nodes.iter()
-					.take(needed)
-					.map(hex::encode)
-					.collect::<Vec<_>>()
-					.join(", ")
-			);
-
-			rt_config.org_nodes.iter()
-				.take(needed)
-				.for_each(|org_address| {
-					selected_validators.push(Validator {
-						address: *org_address,
-						cluster_address: last_block_header.cluster_address,
-						epoch,
-						stake: 0,  // Marker for org node
-						xscore: 1.0, // Fixed value for fallback
-					});
-				});
-			info!("Added {} org nodes as fallback", needed);
-		}
-
+		// Calculate seed for shuffling
 		let seed = self.calculate_seed(last_block_header.block_hash, epoch);
 		let mut rng = StdRng::seed_from_u64(seed);
 
-		let (selected_validators, _) = selected_validators.partial_shuffle(&mut rng, max_validators as usize);
+		// Shuffle the final selected validators and org nodes
+		let (shuffled_validators, _) = selected_external_validators.partial_shuffle(&mut rng, max_validators as usize);
+		let mut final_selected_validators = shuffled_validators.to_vec();
+		// Add org nodes to the final selected validators
+		final_selected_validators.extend(org_validators.clone());
 
-		// After initial selection
-		debug!(
-			"Selected {} external validators: [{}]",
-			selected_validators.len(),
-			selected_validators.iter()
-				.map(|v| hex::encode(v.address))
-				.collect::<Vec<_>>()
-				.join(", ")
-		);
-
-		// Final validator list
-		info!(
-			"Final validator set ({}/{}): {} external, {} fallback",
-			selected_validators.len(),
-			max_validators,
-			selected_validators.len().saturating_sub(needed),
-			needed,
-		);
-
-		Ok(selected_validators.into())
+		info!("Final selected validators: Org Fallback Validator: {:?}, Validator nodes: {:?}, List: {}", org_validators.len(), selected_external_validators.len(), final_selected_validators.iter().map(|v| hex::encode(v.address)).collect::<Vec<_>>().join(", "));
+		Ok(final_selected_validators)
 	}
 
 	pub async fn calculate_xscore(&self, validator_address: &Address, last_block_header: &BlockHeader, node_health: &NodeHealth, db_pool_conn: &'a DbTxConn<'a>,) -> Result<f64, Error>{

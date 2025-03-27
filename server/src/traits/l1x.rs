@@ -9,6 +9,7 @@ use l1x_rpc::rpc_model::{
 	SmartContractReadOnlyCallResponse, SubmitTransactionRequest, SubmitTransactionRequestV2, SubmitTransactionResponse,
 	GetCurrentNodeInfoRequest, GetCurrentNodeInfoResponse, GetBlockInfoRequest, GetBlockInfoResponse,
 	GetRuntimeConfigRequest, GetRuntimeConfigResponse, GetBlockWithDetailsByNumberRequest, GetBlockWithDetailsByNumberResponse,
+	GetActivePeersRequest, GetActivePeersResponse
 };
 use types::eth::filter::{Kind, Params};
 
@@ -136,4 +137,10 @@ pub trait FullNodeJson {
 		&self,
 		request: GetBlockWithDetailsByNumberRequest,
 	) -> Result<GetBlockWithDetailsByNumberResponse, ErrorObjectOwned>;
+
+	#[method(name = "getActivePeers")]
+	async fn get_active_peers(
+		&self,
+		request: GetActivePeersRequest,
+	) -> Result<GetActivePeersResponse, ErrorObjectOwned>;
 }

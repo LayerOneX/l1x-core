@@ -31,6 +31,9 @@ use node_info::node_info_state::NodeInfoState;
 use libp2p::PeerId;
 use crate::consensus::select_and_store_validators_and_proposer;
 use runtime_config::RuntimeConfigCache;
+use p2p::network::NetworkState;
+use std::time::{SystemTime, UNIX_EPOCH};
+// use primitives::constants::{VOTE_THRESHOLD, STAKE_PASS_NUMERATOR, STAKE_PASS_DENOMINATOR};
 
 const QUERY_BLOCK_THRESHOLD: usize = 3;
 
@@ -48,6 +51,8 @@ pub struct PendingBlock {
 	event_tx: broadcast::Sender<EventBroadcast>,
 	node_event_tx: broadcast::Sender<EventData>,
 	network_client_tx: mpsc::Sender<BroadcastNetwork>,
+	network_state: Arc<NetworkState>,
+	timestamp: u128,
 }
 
 impl<'a> PendingBlock {
@@ -61,7 +66,13 @@ impl<'a> PendingBlock {
 		event_tx: broadcast::Sender<EventBroadcast>,
 		node_event_tx: broadcast::Sender<EventData>,
 		network_client_tx: mpsc::Sender<BroadcastNetwork>,
+		network_state: Arc<NetworkState>,
 	) -> Self {
+		let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis();
+
 		Self {
 			votes: Vec::new(),
 			vote_results: Vec::new(),
@@ -75,9 +86,15 @@ impl<'a> PendingBlock {
 			event_tx,
 			node_event_tx,
 			network_client_tx,
+			network_state,
+			timestamp
 		}
 	}
-
+	
+	pub fn get_timestamp(&self) -> u128 {
+		self.timestamp
+	}
+	
 	pub fn add_vote(&mut self, vote: Vote) {
 		self.votes.push(vote)
 	}
@@ -87,7 +104,11 @@ impl<'a> PendingBlock {
 	}
 
 	pub fn set_block(&mut self, block: BlockPayload) {
-		self.block = Some(block)
+		self.block = Some(block);
+		self.timestamp = SystemTime::now()
+			.duration_since(UNIX_EPOCH)
+			.expect("Time went backwards")
+			.as_millis();
 	}
 
 	pub fn get_block(&self) -> Option<&BlockPayload> {
@@ -141,6 +162,17 @@ impl<'a> PendingBlock {
 	) -> Result<VoteResult, Error> {
 		let votes = self.all_votes();
 
+		// Extract block timestamp from the pending block
+		let block_timestamp = if let Some(block) = self.get_block() {
+			block.block.block_header.timestamp as u128
+		} else {
+			// Fallback to current time if block not available (should be rare)
+			SystemTime::now()
+				.duration_since(UNIX_EPOCH)
+				.expect("Time went backwards")
+				.as_millis()
+		};
+
 		// Iterate Votes to hex::encode
 		for v in votes.clone() {
 			debug!("try_to_vote_result ~ Votes ~ Validator address: {:?}, for block #{}, epoch: {}", hex::encode(v.validator_address), v.data.block_number, v.data.epoch);
@@ -179,18 +211,45 @@ impl<'a> PendingBlock {
 				return Err(anyhow!("Blockchain has reached the configured stopping block number: {}", max_block_height));
 			}
 		}
-		let last_block_votes_validators = self.get_last_block_votes_validators(db_pool_conn, rt_config).await?;
+		let last_block_votes_validators = self.get_last_block_votes_validators(db_pool_conn, rt_config.clone()).await?;
 
 		ValidateBlock::validate_proposed_block(&block_payload, &db_pool_conn, self.cluster_address.clone(), last_block_votes_validators)
 			.await?;
 
 		// select validators if not present
 		let validator_state = ValidatorState::new(&db_pool_conn).await?;
-		let validators = validator_state
+		let mut validators = validator_state
 			.load_all_validators(block_payload.block.block_header.epoch)
 			.await?
 			.ok_or(anyhow!("No validators selected for this epoch"))?;
 
+		
+		let mut added_org_nodes = 0;
+		for org_node in rt_config.org_nodes.iter()
+			// .filter(|n| self.network_state.is_peer_available(n))
+			.filter(|n| !validators.iter().any(|v| &v.address == *n))
+		{
+			let backup_validator = Validator {
+				address: *org_node,
+				cluster_address: self.cluster_address,
+				epoch: block_payload.block.block_header.epoch,
+				stake: 0,
+				xscore: 1.0,
+			};
+			validator_state.upsert_validator(&backup_validator).await?;
+			added_org_nodes += 1;
+		}
+
+		if added_org_nodes > 0 {
+			debug!("Added {} org nodes as backup validators", added_org_nodes);
+			// Reload validators with new backups
+			validators = validator_state
+				.load_all_validators(block_payload.block.block_header.epoch)
+				.await?
+				.ok_or(anyhow!("No validators available after adding backups"))?;
+		}
+
+		
 		let block_proposer_address = Account::address(&self.verifying_key.serialize().to_vec())?;
 
 		let mut block_proposer_manager = BlockProposerManager {};
@@ -206,7 +265,8 @@ impl<'a> PendingBlock {
 		let is_block_proposer = block_proposer_manager.is_block_proposer(block_proposer, &db_pool_conn).await?;
 		debug!("try_to_finalize ~ Epoch: {}, Node Address: {:?}, is_validator: {:?}, is_block_proposer: {:?}", block_payload.block.block_header.epoch, hex::encode(self.node_address), is_validator, is_block_proposer);
 
-		if is_validator && !is_block_proposer
+		// if is_validator && !is_block_proposer
+		if is_validator || is_block_proposer
 		{
 			let vote = if let Some(vote) = self.votes.iter().find(|vote| vote.verifying_key == self.verifying_key.serialize().to_vec()).cloned() {
 				debug!("try_to_finalize ~ Vote found: {:?}", hex::encode(vote.validator_address));
@@ -251,9 +311,13 @@ impl<'a> PendingBlock {
 		let mut passed_vote_result: Option<VoteResult> = None;
 	
 		for v in self.vote_results.iter() {
-			let passed = vote_result_manager::VoteResultManager::is_vote_result_passed(
+			// Extract block timestamp from the block payload
+			let block_timestamp = block_payload.block.block_header.timestamp as u128;
+			
+			let passed = vote_result_manager::VoteResultManager::is_vote_result_passed_with_fallback(
 				v,
 				validators.clone(),
+				block_timestamp
 			)
 			.await?;
 			debug!("try_to_finalize ~ VoteResult for block #{}:, Validator address: {:?}, Passed: {:?}", v.data.block_number, hex::encode(v.validator_address), passed);
@@ -347,6 +411,7 @@ pub struct PendingBlocks {
 	event_tx: broadcast::Sender<EventBroadcast>,
 	node_event_tx: broadcast::Sender<EventData>,
 	network_client_tx: mpsc::Sender<BroadcastNetwork>,
+	network_state: &'static Arc<NetworkState>,
 }
 
 impl<'a> PendingBlocks {
@@ -372,6 +437,7 @@ impl<'a> PendingBlocks {
 			event_tx, 
 			node_event_tx,
 			network_client_tx,
+			network_state: NetworkState::get_instance(),
 		}
 	}
 
@@ -386,6 +452,7 @@ impl<'a> PendingBlocks {
 			self.event_tx.clone(),
 			self.node_event_tx.clone(),
 			self.network_client_tx.clone(),
+			self.network_state.clone(),
 		)
 	}
 
@@ -413,11 +480,18 @@ impl<'a> PendingBlocks {
 
 	pub fn add_block(&mut self, block_payload: BlockPayload) {
 		let block_number = block_payload.block.block_header.block_number;
+		let now = SystemTime::now()
+						.duration_since(UNIX_EPOCH)
+						.expect("Time went backwards")
+						.as_millis();
+
 		if let Some(pending_block) = self.blocks.get_mut(&block_number) {
 			pending_block.set_block(block_payload);
+			pending_block.timestamp = now;  // Update timestamp even for existing blocks
 		} else {
 			let mut pending_block = self.get_new_pending_block();
 			pending_block.set_block(block_payload);
+			pending_block.timestamp = now;  // Set initial timestamp
 			self.blocks.insert(block_number, pending_block);
 		}
 	}
@@ -445,6 +519,28 @@ impl<'a> PendingBlocks {
 		} else {
 			Err(anyhow!("Can't find pending Block #{}", block_number))
 		}
+	}
+
+	pub fn expire_old_blocks(&mut self, expiration_ms: u128) -> Vec<BlockNumber> {
+		let current_time = SystemTime::now()
+			.duration_since(UNIX_EPOCH)
+			.expect("Time went backwards")
+			.as_millis();
+
+		let mut expired = Vec::new();
+		self.blocks.retain(|&block_number, pending_block| {
+			// Handle potential time going backwards (NTP adjustments etc)
+			let block_time = pending_block.get_timestamp();
+			let elapsed = current_time.saturating_sub(block_time);
+			let retain = elapsed <= expiration_ms;
+			
+			debug!("PendingBlock #{}: timestamp: {}, elapsed: {}, retain: {}", block_number, block_time, elapsed, retain);
+			if !retain {
+				expired.push(block_number);
+			}
+			retain
+		});
+		expired
 	}
 
 	pub fn get_blocks(&self) -> &HashMap<BlockNumber, PendingBlock> {

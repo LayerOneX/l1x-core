@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-
 use account::account_state::AccountState;
 use anyhow::{anyhow, Error, Result};
 use log::{info, warn, debug};
@@ -13,10 +12,12 @@ use tokio::sync::mpsc;
 use std::collections::HashSet;
 use runtime_config::{RuntimeConfigCache, RuntimeStakingInfoCache};
 use std::sync::Arc;
+// use primitives::constants::{VOTE_THRESHOLD, STAKE_PASS_NUMERATOR, STAKE_PASS_DENOMINATOR, BLOCK_EXPIRATION_TIME};
+use compile_time_config::voting_config::{VOTE_THRESHOLD, STAKE_PASS_NUMERATOR, STAKE_PASS_DENOMINATOR, BLOCK_EXPIRATION_TIME};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-const VOTE_THRESHOLD: f64 = 0.60; // 60%
-const STAKE_PASS_NUMERATOR: u64 = 60;
-const STAKE_PASS_DENOMINATOR: u64 = 100;
+// const STAKE_PASS_NUMERATOR: u64 = 60;
+// const STAKE_PASS_DENOMINATOR: u64 = 100;
 
 /// Returns the minimum number of votes required, based on a configurable threshold.
 /// 
@@ -346,108 +347,95 @@ impl<'a> VoteResultManager {
 		all_votes: &Vec<Vote>, 
 		validators: Vec<Validator>,
 		min_participation_count: usize
-	) -> Result<bool, Error> {
-		// Get block number from votes (all votes should be for same block)
+	  ) -> Result<bool, Error> {
 		let block_number = all_votes.first()
-			.map(|v| v.data.block_number)
-			.unwrap_or(0); // Default to genesis if empty (should never happen)
-
-		debug!(
-			"Vote evaluation for block #{}\n\
-			\tTotal validators: {}\n\
-			\tMinimum participation: {}\n\
-			\tUnique votes received: {}",
-			block_number,
-			validators.len(),
-			min_participation_count,
-			all_votes.len()
-		);
-
-		// Get runtime config and stacking info for all nodes
-		let rt_config:Arc<RuntimeConfigCache> = RuntimeConfigCache::get().await?;
-		let staking_info:Arc<RuntimeStakingInfoCache> = RuntimeStakingInfoCache::get().await?;
+		  .map(|v| v.data.block_number)
+		  .ok_or_else(|| anyhow!("No votes provided"))?;
+	
+		// Get configs
+		let rt_config = RuntimeConfigCache::get().await?;
+		let staking_info = RuntimeStakingInfoCache::get().await?;
 		let min_stake_amount = rt_config.stake_score.min_balance;
-
-		// 1. Filter to only votes from valid validators
-		let validator_addresses: HashSet<Address> =
-			validators.iter().map(|v| v.address).collect();
 	
-		let valid_votes: Vec<&Vote> = all_votes
-			.iter()
-			.filter(|vote| validator_addresses.contains(&vote.validator_address))
-			.collect();
+		// Create validator lookup
+		let validator_addresses: HashSet<Address> = validators.iter().map(|v| v.address).collect();
 	
-		// 2. Check if we have enough votes by count (participation threshold)
-		if valid_votes.len() < min_participation_count {
-			return Ok(false);
+		// Filter valid votes and calculate stakes
+		let mut total_stake: u128 = 0;
+		let mut yes_stake: u128 = 0;
+		let mut no_stake: u128 = 0;
+		let mut valid_vote_count = 0;
+	
+		for vote in all_votes.iter() {
+		  if !validator_addresses.contains(&vote.validator_address) {
+			debug!("Skipping vote from non-validator: {}", hex::encode(&vote.validator_address));
+			continue;
+		  }
+	
+		  valid_vote_count += 1;
+	
+		  // Get stake
+		  let stake = if rt_config.org_nodes.contains(&vote.validator_address) {
+			min_stake_amount as u128
+		  } else {
+			match staking_info.nodes.get(&vote.validator_address) {
+			  Some(stake_info) if stake_info.staked_balance >= min_stake_amount => {
+				stake_info.staked_balance
+			  },
+			  Some(stake_info) => {
+				debug!("Validator {} has insufficient stake: {}", 
+				  hex::encode(&vote.validator_address), stake_info.staked_balance);
+				continue;
+			  },
+			  None => {
+				debug!("No stake info found for validator {}", 
+				  hex::encode(&vote.validator_address));
+				continue;
+			  }
+			}
+		  };
+	
+		  total_stake = total_stake.checked_add(stake)
+			.ok_or_else(|| anyhow!("Stake overflow in total calculation"))?;
+	
+		  if vote.data.vote {
+			yes_stake = yes_stake.checked_add(stake)
+			  .ok_or_else(|| anyhow!("Stake overflow in yes calculation"))?;
+		  } else {
+			no_stake = no_stake.checked_add(stake)
+			  .ok_or_else(|| anyhow!("Stake overflow in no calculation"))?;
+		  }
 		}
 	
-		// Enhanced stake retrieval with multiple fallback mechanisms
-		let get_validator_stake = |validator_address: &Address| -> f64 {
-			debug!("is_passed ~ Resolving stake for {}", hex::encode(validator_address));
-			
-			// Org nodes always get minimum stake
-			if rt_config.org_nodes.contains(validator_address) {
-				debug!("is_passed ~ Org node with minimum stake: {}", min_stake_amount);
-				return min_stake_amount as f64;
-			}
-			
-			// For non-org nodes, check actual stake balance
-			match staking_info.nodes.get(validator_address) {
-				Some(stake) if stake.staked_balance >= min_stake_amount => {
-					debug!("is_passed ~ Valid stake: {} for node", stake.staked_balance);
-					stake.staked_balance as f64
-				},
-				Some(stake) => {
-					debug!("is_passed ~ Stake below minimum: {} < {}", stake.staked_balance, min_stake_amount);
-					0.0  // Exclude nodes with insufficient stake
-				},
-				None => {
-					debug!("is_passed ~ No stake found for non-org node");
-					0.0  // Exclude nodes with no stake info
-				}
-			}
-		};
+		// Check minimum participation by both count and stake
+		if valid_vote_count < min_participation_count {
+		  debug!("Insufficient vote count: {} < {}", valid_vote_count, min_participation_count);
+		  return Ok(false);
+		}
 	
-		let (total_voted_stake, total_yes_stake) = valid_votes.iter().fold(
-			(0u128, 0u128),
-			|(mut total, mut yes), vote| {
-				// Detect org nodes using validator list markers
-				let is_org_node = validators.iter()
-					.find(|v| v.address == vote.validator_address)
-					.map(|v| v.stake == 0 && (v.xscore - 1.0).abs() < f64::EPSILON)
-					.unwrap_or(false);
-
-				let stake = if is_org_node {
-					// Use configured minimum balance for org nodes
-					rt_config.stake_score.min_balance as u128
-				} else {
-					// Regular validator stake
-					staking_info.nodes.get(&vote.validator_address)
-						.map(|s| s.staked_balance)
-						.unwrap_or(0)
-				};
-
-				total += stake;
-				if vote.data.vote {
-					yes += stake;
-				}
-				(total, yes)
-			},
+		let voted_stake = yes_stake.checked_add(no_stake)
+		  .ok_or_else(|| anyhow!("Overflow adding yes and no stakes"))?;
+	
+		// Calculate required yes stake (60% of voted stake)
+		let required_yes_stake = voted_stake
+		  .checked_mul(STAKE_PASS_NUMERATOR as u128)
+		  .and_then(|n| n.checked_div(STAKE_PASS_DENOMINATOR as u128))
+		  .ok_or_else(|| anyhow!("Arithmetic overflow in threshold calculation"))?;
+	
+		debug!(
+		  "Vote stake distribution for block #{}: \n\
+		   Total valid votes: {}\n\
+		   Yes stake: {}\n\
+		   No stake: {}\n\
+		   Required yes stake: {}\n\
+		   Passed: {}",
+		  block_number, valid_vote_count, yes_stake, no_stake, 
+		  required_yes_stake, yes_stake >= required_yes_stake
 		);
+	
+		Ok(yes_stake >= required_yes_stake)
+	  }
 
-		// Integer-based threshold check
-		let passed = if total_voted_stake == 0 {
-			false
-		} else {
-			total_yes_stake.checked_mul(STAKE_PASS_DENOMINATOR as u128)
-				.and_then(|y| total_voted_stake.checked_mul(STAKE_PASS_NUMERATOR as u128)
-					.map(|t| y >= t))
-				.unwrap_or(false)
-		};
-
-		Ok(passed)
-	}
 
 	pub async fn is_vote_result_passed(
 		vote_result: &VoteResult, 
@@ -455,6 +443,43 @@ impl<'a> VoteResultManager {
 	) -> Result<bool, Error> {
 		let unique_votes = Self::get_unique_votes(&vote_result.data.votes);
 		let min_passed_votes = (validators.len() as f64 * VOTE_THRESHOLD) as usize;
+
+		debug!("is_vote_result_passed ~ unique_votes: {:?}", unique_votes);
+		debug!("is_vote_result_passed ~ min_passed_votes: {:?}", min_passed_votes);
+
 		Self::is_passed(&unique_votes, validators, min_passed_votes).await
 	}
+
+	pub async fn is_vote_result_passed_with_fallback(
+        vote_result: &VoteResult,
+        validators: Vec<Validator>,
+        block_timestamp: u128,
+    ) -> Result<bool, Error> {
+		let rt_config:Arc<RuntimeConfigCache> = RuntimeConfigCache::get().await?;
+        // First pass: External validators only
+        let external_validators: Vec<Validator> = validators.iter()
+            .filter(|v| !rt_config.org_nodes.contains(&v.address))
+            .cloned()
+            .collect();
+
+        if !external_validators.is_empty() {
+            match Self::is_vote_result_passed(vote_result, external_validators).await {
+                Ok(true) => return Ok(true),
+                Err(e) => return Err(e),
+                _ => {} // Continue to fallback
+            }
+        }
+
+        // Fallback after 30 seconds
+        let current_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|_| anyhow!("System time before UNIX EPOCH!"))?
+            .as_millis();
+
+        if current_time.saturating_sub(block_timestamp) > BLOCK_EXPIRATION_TIME {
+            Self::is_vote_result_passed(vote_result, validators).await
+        } else {
+            Ok(false)
+        }
+    }
 }

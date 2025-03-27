@@ -1,16 +1,17 @@
 use std::collections::HashMap;
 use anyhow::{anyhow, Error};
-use block::block_state::BlockState;
+use block::{block_manager::BlockManagerCache, block_state::BlockState};
 use block_proposer::block_proposer_state::BlockProposerState;
 use db::db::{Database, DbTxConn};
 use l1x_node_health::NodeHealthState;
 use l1x_vrf::common::SecpVRF;
 use log::{debug, error, info, warn};
 use node_info::node_info_state::NodeInfoState;
+use p2p::network::{NetworkState, PeerStatusInfo};
 use primitives::*;
 use secp256k1::{hashes::sha256, Message, PublicKey, SecretKey};
 use system::{
-	account::Account, block::{BlockPayload, L1xResponse, QueryBlockMessage}, block_proposer::BlockProposerPayload, mempool::ProcessMempool, network::{BroadcastNetwork, EventBroadcast}, node_health::{NodeHealth, NodeHealthPayload}, node_info::NodeInfo, vote::{Vote, VoteSignPayload}, vote_result::VoteResult
+	account::Account, block::{BlockPayload, L1xResponse, QueryBlockMessage}, block_proposer::BlockProposerPayload, mempool::ProcessMempool, network::{BroadcastNetwork, EventBroadcast}, node_health::{NodeHealth, NodeHealthPayload}, node_info::NodeInfo, node_status::NodeDetailedStatus, vote::{Vote, VoteSignPayload}, vote_result::VoteResult
 };
 use tokio::sync::{broadcast, mpsc};
 use validate::{
@@ -32,6 +33,7 @@ use system::validator::Validator;
 use validate::validate_block::ValidateBlock;
 use validate::validate_vote_result::ValidateVoteResult;
 use vote_result::vote_result_state::VoteResultState;
+const PENDING_BLOCK_EXPIRATION_TIME: u128 = 20 * 1000; //ms , 20 seconds
 
 pub struct Consensus {
 	pub event_tx: broadcast::Sender<EventBroadcast>,
@@ -218,56 +220,101 @@ impl<'a>  Consensus {
 		block_payload: BlockPayload,
 		db_pool_conn: &'a DbTxConn<'a>,
 	) -> Result<(), Error> {
-		debug!("Node has received new block from the network");
-
+		let block_number = block_payload.block.block_header.block_number;
+		debug!("Node has received new block #{} from the network", block_number);
+	
+		// First check if block is already executed to avoid duplicate work
+		let block_state = BlockState::new(&db_pool_conn).await?;
+		if let Ok(true) = block_state.is_block_executed(block_number, &self.cluster_address).await {
+			info!("Block #{} is already executed, skipping validation", block_number);
+			// Still broadcast the block to ensure network-wide propagation
+			if let Err(e) = self
+				.network_client_tx
+				.send(BroadcastNetwork::BroadcastValidateBlock(block_payload)).await {
+				warn!("Unable to write block to network_client_tx channel: {:?}", e)
+			}
+			return Ok(());
+		}
+	
 		// Validate the block proposer
 		let current_epoch = block_payload.block.block_header.epoch;
 		let block_proposer_state = BlockProposerState::new(db_pool_conn).await?;
-		let authorized_proposer = block_proposer_state
-			.load_block_proposer(self.cluster_address, current_epoch)
-			.await?
-			.ok_or(anyhow!("No authorized proposer for epoch {}", current_epoch))?;
-
-		if Account::address(&block_payload.verifying_key)? != authorized_proposer.address {
-			return Err(anyhow!("Block #{} from unauthorized proposer {}",
-				block_payload.block.block_header.block_number,
-				hex::encode(Account::address(&block_payload.verifying_key)?)
-			));
-		}
-
-		{
-			let block_state = BlockState::new(&db_pool_conn).await?;
-			match block_state.is_block_executed(block_payload.block.block_header.block_number, &self.cluster_address).await {
-				Ok(true) => {
-					if let Err(e) = self
-						.network_client_tx
-						.send(BroadcastNetwork::BroadcastValidateBlock(block_payload)).await {
-						warn!("Unable to write block to network_client_tx channel: {:?}", e)
+		
+		// Check for proposer information - handle missing proposer cases explicitly
+		match block_proposer_state.load_block_proposer(self.cluster_address, current_epoch).await {
+			Ok(Some(authorized_proposer)) => {
+				// Derive proposer address from the block's verifying key
+				match Account::address(&block_payload.verifying_key) {
+					Ok(proposer_from_key) => {
+						if proposer_from_key != authorized_proposer.address {
+							warn!("Block #{} from unauthorized proposer {} (expected: {})",
+								block_number,
+								hex::encode(proposer_from_key),
+								hex::encode(authorized_proposer.address)
+							);
+							
+							// Note: In some cases this might be due to race conditions during proposer changes
+							// Forward the block anyway to ensure network consistency, but don't add to pending
+							if let Err(e) = self
+								.network_client_tx
+								.send(BroadcastNetwork::BroadcastValidateBlock(block_payload))
+								.await
+							{
+								warn!("Unable to forward unauthorized block: {:?}", e)
+							}
+							return Ok(());
+						}
+					},
+					Err(e) => {
+						warn!("Failed to derive address from verifying key for block #{}: {}", 
+							  block_number, e);
+						return Ok(());
 					}
-					return Ok(())
 				}
-				_ => ()
+			},
+			Ok(None) => {
+				warn!("No authorized proposer found for epoch {} while validating block #{}", 
+					  current_epoch, block_number);
+				// We don't validate further due to missing proposer info
+			},
+			Err(e) => {
+				warn!("Error loading block proposer for epoch {} while validating block #{}: {}", 
+					  current_epoch, block_number, e);
+				// We don't validate further due to proposer loading error
 			}
 		}
-		// Always store the block because probably we have not received the parent block yet and can't validate this block
+	
+		// If we reach here, either the block has passed validation or we're skipping validation
+		// due to missing proposer information
 		self.pending_blocks.add_block(block_payload.clone());
-
-		let block_payload = BlockPayload {
+		info!("Added block #{} to pending blocks queue", block_number);
+	
+		// Prepare for broadcasting - create a new payload with our node as the sender
+		let block_payload_to_broadcast = BlockPayload {
 			block: block_payload.block,
 			signature: block_payload.signature,
 			verifying_key: block_payload.verifying_key,
 			sender: self.node_address,
 		};
-
+	
+		// Broadcast to network
 		if let Err(e) = self
 			.network_client_tx
-			.send(BroadcastNetwork::BroadcastValidateBlock(block_payload))
+			.send(BroadcastNetwork::BroadcastValidateBlock(block_payload_to_broadcast))
 			.await
 		{
 			warn!("Unable to write block to network_client_tx channel: {:?}", e)
 		}
-
-		self.pending_blocks.try_to_finalize(&db_pool_conn, self.pool_address).await?;
+	
+		// Try to finalize any pending blocks that may now be ready
+		match self.pending_blocks.try_to_finalize(&db_pool_conn, self.pool_address).await {
+			Ok(_) => debug!("Successfully checked pending blocks after receiving block"),
+			Err(e) => {
+				warn!("Error while finalizing pending blocks after receiving block #{}: {}", 
+					  block_number, e)
+			}
+		}
+		
 		Ok(())
 	}
 
@@ -593,8 +640,19 @@ impl<'a>  Consensus {
 			return Err(anyhow!("Block #{} is already stored", block_number));
 		}
 
+		// Expire old pending blocks
+		let expired = self.pending_blocks.expire_old_blocks(PENDING_BLOCK_EXPIRATION_TIME);
+		warn!("Expired pending blocks: {:?}", expired);
+		
 		// NEW LOGIC: Only refuse if there are pending blocks that are not finalized
 		let pending_blocks = self.pending_blocks.get_blocks();
+		if pending_blocks.contains_key(&block_number) {
+			return Err(anyhow!(
+				"Cannot add block #{} because it's already pending", 
+				block_number
+			));
+		}
+
 		if !pending_blocks.is_empty() {
 			// If there are pending blocks, ensure they are for the previous block
 			if !pending_blocks.contains_key(&(block_number - 1)) {
@@ -720,6 +778,88 @@ impl<'a>  Consensus {
 
 		}
 		Ok(())
+	}
+
+	pub async fn handle_publish_node_detailed_status(&self,
+		peer_id: String
+	) -> Result<(), Error> {
+
+		// Get Current Executed Block from Block Manager Cache
+		let current_block  = {
+			let block_manager_cache = BlockManagerCache::get_instance();
+			match block_manager_cache.get_last_executed_block_header().await {
+				Ok(block_header) => block_header.block_number,
+				Err(e) => {
+					warn!("Failed to get current block: {:?}", e);
+					0
+				},
+			}
+		};
+
+		// Get Mempool Size
+		let mempool_size = {
+			match self.get_mempool_size().await {
+				Ok(size) => size,
+				Err(e) => {
+					warn!("Failed to get mempool size: {:?}", e);
+					0
+				},
+			}
+		};
+
+		// TODO: Patch this with Node Uptime
+		let uptime_seconds = 0;
+
+		// Get Connected Peers Count
+		let connected_peers = {
+			let network_state = NetworkState::get_instance();
+			network_state.get_connected_peers_count().await
+		};
+
+		let node_detailed_status = NodeDetailedStatus {
+			peer_id: peer_id.to_string(),
+			current_block,
+			pending_transactions: mempool_size as u32,
+			uptime_seconds,
+			connected_peers: connected_peers as u32,
+		};
+
+		match self.network_client_tx.send(BroadcastNetwork::BroadcastNodeDetailedStatus(node_detailed_status.clone())).await {
+			Ok(_) => debug!("ID: NODE_DETAILED_STATUS, handle_publish_node_detailed_status ~ Successfully sent node detailed status to network_client_tx channel, with peer_id: {:?}, node_detailed_status: {:?}", peer_id, node_detailed_status),
+			Err(e) => warn!("ID: NODE_DETAILED_STATUS, handle_publish_node_detailed_status ~ Failed to send node detailed status to peer: {:?}", e),
+		};
+		Ok(())
+	}
+
+	pub async fn handle_receive_node_detailed_status(&self, node_detailed_status: NodeDetailedStatus) -> Result<(), Error> {
+		
+		let network_state = NetworkState::get_instance();
+		let last_update_time = util::generic::current_timestamp_in_millis().unwrap_or_default();
+		let peer_id = PeerId::from_str(&node_detailed_status.peer_id).map_err(|e| anyhow!("Unable to get peer_id: {:?}", e))?;
+
+		debug!("ID: NODE_DETAILED_STATUS, handle_receive_node_detailed_status ~ Received node detailed status from peer: {:?}, node_detailed_status: {:?}", peer_id, node_detailed_status.clone());
+		match network_state.update_active_peer_status_info(peer_id, PeerStatusInfo{
+			current_block: Some(node_detailed_status.current_block),
+			pending_transactions: Some(node_detailed_status.pending_transactions),
+			connected_peers: Some(node_detailed_status.connected_peers),
+			uptime_seconds: Some(node_detailed_status.uptime_seconds),
+			last_update_time: Some(last_update_time as u64),
+		}).await {
+			Ok(_) => debug!("ID: NODE_DETAILED_STATUS, handle_receive_node_detailed_status ~ Successfully updated node detailed status for peer: {:?}", peer_id),
+			Err(e) => warn!("ID: NODE_DETAILED_STATUS, handle_receive_node_detailed_status ~ Failed to update node detailed status for peer: {:?}", e),
+		};
+
+		Ok(())
+	}
+
+	// TODO: Implement this
+	pub async fn get_mempool_size(&self) -> Result<usize, Error> {
+		// let (sender, receiver) = oneshot::channel();
+		// self.mempool_tx.send(ProcessMempool::GetSize(sender)).await.map_err(|e| anyhow!("Failed to send get mempool size request: {}", e))?;
+	
+		// receiver.await.map_err(|e| anyhow!("Failed to receive mempool size: {}", e))
+
+		Ok(0)
 	}
 }
 

@@ -8,6 +8,7 @@ pub enum ProcessMempool {
 	RemoveTrasaction(Transaction),
 	ProposeBlockOnMempoolFull,
 	ProposeBlockOnBlockTime,
+	GetSize(oneshot::Sender<usize>),
 }
 
 #[derive(Debug, Clone)]

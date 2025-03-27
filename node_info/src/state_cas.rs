@@ -120,12 +120,12 @@ impl NodeInfoState for StateCas {
 		);
 		Ok((Some(cluster_address), Some(node_info)))
 	}
-	async fn find_node_info_by_node_id(&self, node_id: Vec<u8>) -> Result<NodeInfo, Error> {
+	async fn find_node_info_by_peer_id(&self, peer_id_address: &str) -> Result<NodeInfo, Error> {
 		let (
 			address, peer_id, joined_epoch, cluster_address, ip_address, metadata, signature, verifying_key
 		) = self
 			.session
-			.query("SELECT address, peer_id, joined_epoch, cluster_address, ip_address, metadata, signature, verifying_key FROM node_info WHERE address = ?;", (node_id,))
+			.query("SELECT address, peer_id, joined_epoch, cluster_address, ip_address, metadata, signature, verifying_key FROM node_info WHERE address = ?;", (peer_id_address.to_string(),))
 			.await?
 			.single_row()?
 			.into_typed::<(Address, String, i64, Address, IpAddress, Metadata, SignatureBytes, VerifyingKeyBytes)>()?;
@@ -142,7 +142,7 @@ impl NodeInfoState for StateCas {
 		);
 		Ok(node_info)
 	}
-
+	
 	async fn load_node_info(&self, address: &Address) -> Result<NodeInfo, Error> {
 		let (
 			address, peer_id, joined_epoch, cluster_address, ip_address, metadata, signature, verifying_key

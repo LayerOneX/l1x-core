@@ -15,7 +15,7 @@ use l1x_rpc::rpc_model::{node_server::{Node, NodeServer}, CreateAccountRequest, 
 						 GetNodeHealthsRequest, GetNodeHealthsResponse, GetBpForEpochRequest, GetBpForEpochResponse,
 						 GetValidatorsForEpochRequest, GetValidatorsForEpochResponse, GetBlockInfoRequest,
 						 GetBlockInfoResponse, GetRuntimeConfigRequest, GetRuntimeConfigResponse, GetBlockWithDetailsByNumberRequest,
-						 GetBlockWithDetailsByNumberResponse,
+						 GetBlockWithDetailsByNumberResponse, GetActivePeersRequest, GetActivePeersResponse
 };
 use log::info;
 use moka::sync::Cache;
@@ -60,6 +60,13 @@ impl Node for FullNodeGrpc {
 		request: Request<GetAccountStateRequest>,
 	) -> Result<Response<GetAccountStateResponse>, Status> {
 		Ok(Response::new(self.service.get_account_state(request.into_inner()).await?))
+	}
+
+	async fn get_active_peers(
+		&self,
+		request: Request<GetActivePeersRequest>,
+	) -> Result<Response<GetActivePeersResponse>, Status> {
+		Ok(Response::new(self.service.get_active_peers(request.into_inner()).await?))
 	}
 
 	async fn submit_transaction(
