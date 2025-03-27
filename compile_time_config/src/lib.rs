@@ -20,7 +20,7 @@ pub const EVM_GAS_PRICE: Balance = 7000; // 7000 Gas for 1 nanoL1X, Not used.
 pub const SYSTEM_CONTRACTS_OWNER: Address = hex!("ff00000000000000000000000000000000000000");
 pub const SYSTEM_REWARDS_DISTRIBUTOR: Address = hex!("ff00000000000000000000000000000000000001");
 
-pub const MAX_SYNC_BLOCK_DIFF: u128 = 7000; // 7000 blocks
+pub const MAX_SYNC_BLOCK_DIFF: u128 = 9000; // 9000 blocks
 
 pub const MAX_BLOCK_DIFF: u64 = 50; // 50 blocks for Validator selection
 pub mod voting_config {
