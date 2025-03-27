@@ -81,9 +81,10 @@ impl<'a> BaseState<Event> for StatePg<'a> {
 		};
 		match &self.pg.conn {
 			PgConnectionType::TxConn(conn) =>
-				diesel::insert_into(event).values(new_event).execute(*conn.lock().await),
+				diesel::insert_into(event).values(new_event).on_conflict_do_nothing().execute(*conn.lock().await),
 			PgConnectionType::PgConn(conn) => diesel::insert_into(schema::event::table)
 				.values(new_event)
+				.on_conflict_do_nothing()
 				.execute(&mut *conn.lock().await),
 		}?;
 		Ok(())
