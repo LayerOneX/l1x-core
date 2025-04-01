@@ -289,7 +289,7 @@ fn validate_reward_tx(
 fn compute_block_hash(block_payload: &BlockPayload) -> Result<BlockHash, Error> {
 	let new_block_sign_payload: BlockSignPayload = block_payload.into();
 	let new_block_sign_payload_bytes: Vec<u8> =
-		match bincode::serialize(&new_block_sign_payload) {
+		match new_block_sign_payload.canonical_serialize() {
 			Ok(val) => val,
 			Err(err) =>
 				return Err(anyhow!(
@@ -532,7 +532,7 @@ mod tests {
  			state_hash: last_block_header.state_hash,
 			epoch: 1,
 		};
-		let new_block_sign_payload_bytes: Vec<u8> = bincode::serialize(&new_block_sign_payload).unwrap();
+		let new_block_sign_payload_bytes: Vec<u8> = new_block_sign_payload.canonical_serialize().unwrap();
 		let block_manager = BlockManager::new();
 		let block_hash = block_manager.compute_block_hash(&new_block_sign_payload_bytes);
 		let new_block_header = BlockHeader {

@@ -273,7 +273,7 @@ fn create_block_internal(last_block_header: BlockHeader, transactions: Vec<Trans
 	let new_block_sign_payload: BlockSignPayload = BlockSignPayload::from(&new_block);
 	// create hash
 	let new_block_sign_payload_bytes: Vec<u8> =
-		match bincode::serialize(&new_block_sign_payload) {
+		match new_block_sign_payload.canonical_serialize() {
 			Ok(val) => val,
 			Err(err) =>
 				return Err(anyhow!(
@@ -310,6 +310,7 @@ mod tests {
 			epoch: 0,
 		};
 		let tx1 = Transaction {
+			version: TransactionVersion::V3,
 			nonce: 1,
 			transaction_type: TransactionType::NativeTokenTransfer([1; 20], 10),
 			fee_limit: 10000,
@@ -318,6 +319,7 @@ mod tests {
 			eth_original_transaction: None,
 		};
 		let tx2 = Transaction {
+			version: TransactionVersion::V3,
 			nonce: 2,
 			transaction_type: TransactionType::NativeTokenTransfer([2; 20], 20),
 			fee_limit: 10000,
@@ -354,7 +356,7 @@ mod tests {
 			transactions: transactions.clone(),
 		};
 		let new_block_sign_payload: BlockSignPayload = BlockSignPayload::from(&new_block);
-		let new_block_sign_payload_bytes: Vec<u8> = bincode::serialize(&new_block_sign_payload).unwrap();
+		let new_block_sign_payload_bytes: Vec<u8> = new_block_sign_payload.canonical_serialize().unwrap();
 
 		let block_manager = BlockManager::new();
 		let block_hash = block_manager.compute_block_hash(&new_block_sign_payload_bytes); // Implement this function to compute the block hash

@@ -14,7 +14,8 @@ use serde::{Deserialize, Serialize};
 use std::{error::Error, fmt};
 use libp2p::{request_response::{ ResponseChannel, RequestId }, PeerId};
 use crate::vote_result::VoteResult;
-
+use sha2::{Digest, Sha256};
+use log::debug;
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct QueryBlockMessage {
     pub block_number: BlockNumber,
@@ -114,6 +115,71 @@ impl From<&Block> for BlockSignPayload {
 			block_version: block.block_header.block_version,
 			state_hash: block.block_header.state_hash,
 			epoch: block.block_header.epoch,
+		}
+	}
+}
+
+impl BlockSignPayload {
+	pub fn canonical_serialize(&self) -> Result<Vec<u8>, Box<dyn std::error::Error + Send>> {
+		let mut txs = self.transactions.clone();
+		txs.sort_by(|a, b| {
+            // First compare by nonce
+            let nonce_cmp = a.nonce.cmp(&b.nonce);
+            if nonce_cmp != std::cmp::Ordering::Equal {
+                return nonce_cmp;
+            }
+            
+            // If nonces are equal, compare by a hash of their serialized content
+            // Use a try_fold pattern to handle errors in serialization
+            let compare_result = (|| {
+				let a_bytes = bincode::serialize(a)
+					.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+				let b_bytes = bincode::serialize(b)
+					.map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+				
+				let mut hasher_a = Sha256::new();
+				hasher_a.update(&a_bytes);
+				let hash_a = hasher_a.finalize();
+				
+				let mut hasher_b = Sha256::new();
+				hasher_b.update(&b_bytes);
+				let hash_b = hasher_b.finalize();
+				
+				Ok::<std::cmp::Ordering, Box<dyn std::error::Error + Send>>(hash_a.cmp(&hash_b))
+			})();
+
+            // If there's an error in serialization, fall back to a deterministic order
+            // This ensures we don't panic but still maintain deterministic ordering
+            compare_result.unwrap_or_else(|_| {
+                // Fallback to comparing memory addresses or other deterministic fields
+                a.verifying_key.cmp(&b.verifying_key)
+            })
+        });
+		
+		let canonical_payload = BlockSignPayload {
+			block_number: self.block_number,
+			parent_hash: self.parent_hash,
+			block_type: self.block_type.clone(),
+			cluster_address: self.cluster_address,
+			transactions: txs,
+			timestamp: self.timestamp,
+			num_transactions: self.num_transactions,
+			block_version: self.block_version,
+			state_hash: self.state_hash,
+			epoch: self.epoch,
+		};
+
+		 // Log for debugging
+		 debug!(
+            "Canonical serialization for block #{}: txs count={}, first tx nonce={:?}", 
+            self.block_number,
+            canonical_payload.transactions.len(),
+            canonical_payload.transactions.first().map(|tx| tx.nonce)
+        );
+			
+		match bincode::serialize(&canonical_payload) {
+			Ok(bytes) => Ok(bytes),
+			Err(e) => Err(Box::new(e)),
 		}
 	}
 }
