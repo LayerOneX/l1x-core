@@ -158,7 +158,7 @@ impl<'a> Mempool {
 			.insert(insertion_pos, (transaction.clone(), current_time));
 		let size = self.transactions_priority.len();
 
-		info!("MEMPOOL: Transaction has been added. mempool size: {}, tx hash: {}, sender: {}, nonce: {}",
+		info!("💼 📥  Mempool -  Add Transaction - Transaction has been added. mempool size: {}, tx hash: {}, sender: {}, nonce: {}",
 			size, transaction_hash_string, hex::encode(&sender), transaction.nonce);
 
 		if self.multinode_mode {
@@ -167,7 +167,7 @@ impl<'a> Mempool {
 				.send(BroadcastNetwork::BroadcastTransaction(transaction))
 				.await
 			{
-				warn!("Unable to write transaction ({transaction_hash_string}) to network_client_tx channel: {:?}", e)
+				warn!("💼 ⚠️ Mempool -  Add Transaction - Unable to write transaction ({transaction_hash_string}) to network_client_tx channel: {:?}", e)
 			}
 		}
 
@@ -200,14 +200,13 @@ impl<'a> Mempool {
 		);
 
 		if transactions != trasactions_priority {
-			warn!("validate_queues not equal, {}", msg);
-			warn!("transactions, len={}", transactions.len());
+			warn!("💼 ⚠️ Mempool -  Validate Queues - Transactions in mempool, len={}", transactions.len());
 			for tx in &transactions {
-				warn!("{}", tx)
+				warn!("💼 ⚠️ Mempool -  Validate Queues - Transaction in mempool: {}", tx)
 			}
-			warn!("trasactions_priority, len={}", trasactions_priority.len());
+			warn!("💼 ⚠️ Mempool -  Validate Queues - Transactions Priority in mempool, len={}", trasactions_priority.len());
 			for tx in &trasactions_priority {
-				warn!("{}", tx)
+				warn!("💼 ⚠️ Mempool -  Validate Queues - Transaction Priority in mempool: {}", tx)
 			}
 
 			false
@@ -396,19 +395,19 @@ impl<'a> Mempool {
 							account.nonce = expected_nonce;
 							transactions_to_be_included.push(tx.clone())
 						} else {
-							warn!("Transaction is dropped: hash: {}, sender: {}, not enough balance", 
+							warn!("💼 ⚠️ Mempool -  Build New Block Transactions List - Transaction is dropped: hash: {}, sender: {}, not enough balance", 
 								hex::encode(&tx.transaction_hash().unwrap_or_default()), hex::encode(&sender))
 						}
 					} else {
-						warn!("Transaction is dropped: hash: {}, sender: {}, required amount overflow", 
+						warn!("💼 ⚠️ Mempool -  Build New Block Transactions List - Transaction is dropped: hash: {}, sender: {}, required amount overflow", 
 							hex::encode(&tx.transaction_hash().unwrap_or_default()), hex::encode(&sender))
 					}
 				} else {
-					warn!("Transaction is dropped: hash: {}, sender: {}, invalid nonce, expected nonce: {}, tx nonce: {}", 
+					warn!("💼 ⚠️ Mempool -  Build New Block Transactions List - Transaction is dropped: hash: {}, sender: {}, invalid nonce, expected nonce: {}, tx nonce: {}", 
 					hex::encode(&tx.transaction_hash().unwrap_or_default()), hex::encode(&sender), expected_nonce, tx.nonce)
 				}
 			} else {
-				warn!("Transaction is dropped: hash: {}, sender: {}, nonce overflow", 
+				warn!("💼 ⚠️ Mempool -  Build New Block Transactions List - Transaction is dropped: hash: {}, sender: {}, nonce overflow", 
 					hex::encode(&tx.transaction_hash().unwrap_or_default()), hex::encode(&sender))
 			}
 		}
@@ -433,12 +432,12 @@ impl<'a> Mempool {
 		match block_state.is_block_executed(block_header.block_number, &self.cluster_address).await {
 			Ok(is_exec) => {
 				if !is_exec {
-					debug!("The previous block is not executed: {}", block_header.block_number);
+					debug!("💼  Mempool -  Propose Block - The previous block is not executed: {}", block_header.block_number);
 					return Ok(ProposeBlockResult::NotProposed)
 				}
 			},
 			Err(e) => {
-				warn!("Propose Block: is_block_executed failed, block #{}, error: {}", block_header.block_number, e);
+				warn!("💼 ⚠️ Mempool -  Propose Block - Failed to check if the previous block is executed, block #{}, error: {}", block_header.block_number, e);
 				return Ok(ProposeBlockResult::NotProposed)
 			}
 		};
@@ -448,11 +447,11 @@ impl<'a> Mempool {
 
         if block_proposer.address != self.node_address {
             // This node is not the proposer for this epoch
-			log::debug!("Node {} is not block proposer for this epoch {}", hex::encode(self.node_address), current_epoch);
+			log::debug!("💼  Mempool -  Propose Block - Node {} is not block proposer for this epoch {}", hex::encode(self.node_address), current_epoch);
             return Ok(ProposeBlockResult::NotProposed);
         }
 		info!(
-			"I am proposing a block. Block Proposer: {}",
+			"💼 🏗  Mempool -  Propose Block - I am proposing a block. Block Proposer: {}",
 			hex::encode(block_proposer.address)
 		);
 
@@ -474,7 +473,7 @@ impl<'a> Mempool {
 			.await?;
 
 		info!(
-			"Block Produced, Block Hash - {:?}",
+			"💼 ✨  Mempool -  Propose Block - Block Produced, Block Hash - {:?}",
 			hex::encode(block.block_header.block_hash.clone())
 		);
 
@@ -487,7 +486,7 @@ impl<'a> Mempool {
 			events =
 				ExecuteBlock::execute_block(&block, self.event_tx.clone(), db_pool_conn).await?;
 			info!(
-				"Block Executed, Block Hash - {:?}",
+				"💼 🎯  Mempool -  Propose Block - Block Executed, Block Hash - {:?}",
 				hex::encode(block.block_header.block_hash.clone())
 			);
 		} 
@@ -509,7 +508,7 @@ impl<'a> Mempool {
 			if let Err(e) = network_receive_tx.send(NetworkMessage::BlockProposerEvent(BlockProposerEventType::AddBlock(block_payload, sender)))
 				.await
 			{
-				warn!("Unable to write block_payload to network_receive_tx channel: {:?}", e)
+				warn!("💼 ⚠️ Mempool -  Propose Block - Unable to write block_payload to network_receive_tx channel: {:?}", e)
 			} else {
 				match receiver.await {
 					Ok(res) => match res {
@@ -517,17 +516,17 @@ impl<'a> Mempool {
 							match network_ack {
 								NetworkAcknowledgement::Success => {
 									self.clear_transactions().await;
-									info!("Block #{} has been proposed", block.block_header.block_number);
+									info!("💼 📋  Mempool -  Propose Block - Block #{} has been proposed", block.block_header.block_number);
 								},
 								NetworkAcknowledgement::Failure => {
-									warn!("Failed to propose Block #{}", block.block_header.block_number);
+									warn!("💼 ⚠️ Mempool -  Propose Block - Failed to propose Block #{}", block.block_header.block_number);
 									return Ok(ProposeBlockResult::NotProposed);
 								},
 							}
 						},
-						Err(e) => warn!("Received error: {:?}", e),
+						Err(e) => warn!("💼 ⚠️ Mempool -  Propose Block - Failed to receive network acknowledgement: {:?}", e),
 					},
-					Err(e) => warn!("Failed to receive message: {:?}", e),
+					Err(e) => warn!("💼 ⚠️ Mempool -  Propose Block - Failed to receive message: {:?}", e),
 				}
 			}
 		}
@@ -549,7 +548,7 @@ impl<'a> Mempool {
 		let vote_result_state = vote_result::vote_result_state::VoteResultState::new(&db_pool_conn).await?;
 		let mut reward_txs= Vec::new();
 		if let Ok(vote_result) = vote_result_state.load_vote_result(block_hash).await {
-			debug!("build_reward_transactions ~ Vote Addresses: {:?}", vote_result.data.votes.iter().map(|v| hex::encode(v.validator_address)).collect::<Vec<String>>());
+			debug!("💼  Mempool -  Propose Block - Vote Addresses: {:?}", vote_result.data.votes.iter().map(|v| hex::encode(v.validator_address)).collect::<Vec<String>>());
 			let account_state = AccountState::new(&db_pool_conn).await?;
 			let mut nonce = account_state.get_nonce(&SYSTEM_REWARDS_DISTRIBUTOR).await?;
 
@@ -565,7 +564,7 @@ impl<'a> Mempool {
 			let fee_limit = execution_fee.get_token_transfer_tx_total_fee()?;
 
 			// Stake info for all nodes
-			debug!("build_reward_transactions ~ rt_stake_info: {:?}", 
+			debug!("💼  Mempool -  Propose Block - Stake info for all nodes: {:?}", 
 				rt_stake_info.nodes.iter()
 					.map(|(k, v)| (hex::encode(k), v.staked_balance))
 					.collect::<Vec<(String, u128)>>()
@@ -575,8 +574,8 @@ impl<'a> Mempool {
 			for vote in &vote_result.data.votes {
 				let validator_address = Account::address(&vote.verifying_key)?;
 				// skip org_nodes from rewards distribution
-				debug!("build_reward_transactions ~ Is Org Node: {:?}", rt_config.org_nodes.contains(&validator_address));
-				debug!("build_reward_transactions ~ Validator Address: {:?}", hex::encode(validator_address));
+				debug!("💼 Mempool -  Propose Block - Is Org Node: {:?}", rt_config.org_nodes.contains(&validator_address));
+				debug!("💼 Mempool -  Propose Block - Validator Address: {:?}", hex::encode(validator_address));
 				if !rt_config.org_nodes.contains(&validator_address) {
 					if let Some(info) = rt_stake_info.nodes.get(&validator_address) {
 						nonce += 1;
@@ -588,7 +587,7 @@ impl<'a> Mempool {
 						let tx = Transaction::new_system(&SYSTEM_REWARDS_DISTRIBUTOR, nonce, transaction_type, fee_limit);
 						reward_txs.push(tx);
 					} else {
-						warn!("No stake info found for vote: {:?}", vote);
+						warn!("💼 ⚠️ Mempool -  Propose Block - No stake info found for vote: {:?}", vote);
 					}
 				}
 			}
@@ -610,14 +609,14 @@ impl<'a> Mempool {
 				// Check if the balance is sufficient
 				if balance < total_cost {
 					warn!(
-						"Not enough balance to distribute rewards for block #{}. Required: {}, Available: {}",
+						"💼 ⚠️ Mempool -  Propose Block - Not enough balance to distribute rewards for block #{}. Required: {}, Available: {}",
 						block_number, total_cost, balance
 					);
 					return Ok(vec![]);
 				}
 			}
 		} else {
-			warn!("Vote result not found found for block: {}", block_number);
+			warn!("💼 ⚠️ Mempool -  Propose Block - Vote result not found found for block: {}", block_number);
 		}
 		Ok(reward_txs)
 	}

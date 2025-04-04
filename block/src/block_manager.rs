@@ -45,7 +45,7 @@ impl BlockManagerCache {
 	pub async fn set_last_executed_block_header(&self, last_executed_block_header: BlockHeader) -> Result<(), Error> {
 		let mut last_executed_block_header_guard = self.last_executed_block_header.write();
 		*last_executed_block_header_guard = last_executed_block_header.clone();
-		log::debug!("Last executed block header set to: {:?}", last_executed_block_header);
+		log::debug!("🧊  Block Manager -  Set Last Executed Block Header Cache - Block: #{}", last_executed_block_header.block_number);
 		Ok(())
 	}
 
@@ -116,13 +116,13 @@ impl<'a> BlockManager {
 		let current_epoch = match self.calculate_current_epoch(block_number) {
 				Ok(epoch) => epoch,
 				Err(e) => {
-					log::error!("Unable to get current_epoch: {:?}", e);
+					log::error!("🧊 🚨  Block Manager -  Create Block - Unable to get current_epoch: {:?}", e);
 					last_block_header.epoch
 				}
 		};
-		log::debug!("Current epoch in new block created {}", current_epoch);
+		log::debug!("🧊  Block Manager -  Create Block - Current epoch in new block created {}", current_epoch);
 		let new_block = create_block_internal(last_block_header, transactions, cluster_address, timestamp, current_epoch, block_type)?;
-		log::debug!("New block created {}",new_block);
+		log::debug!("🧊  Block Manager -  Create Block - New block created {}",new_block);
 		Ok(new_block)
 	} 
 
@@ -243,7 +243,7 @@ fn create_block_internal(last_block_header: BlockHeader, transactions: Vec<Trans
 	// Increment the block number from the last block header
 	let block_number: BlockNumber = last_block_header.block_number + 1;
 	info!(
-			"🟪🟪🟪 Creating block #{} in cluster 0x{} 🟪🟪🟪",
+			"🧊  Block Manager -  Create Block - Creating block #{} in cluster 0x{} ",
 			block_number,
 			hex::encode(&cluster_address)
 		);
@@ -277,7 +277,7 @@ fn create_block_internal(last_block_header: BlockHeader, transactions: Vec<Trans
 			Ok(val) => val,
 			Err(err) =>
 				return Err(anyhow!(
-						"Error converting new_block_sign_payload to bytes: {:?}",
+						"🧊 🚨  Block Manager -  Create Block - Error converting new_block_sign_payload to bytes: {:?}",
 						err
 					)),
 		};

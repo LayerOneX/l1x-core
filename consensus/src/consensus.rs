@@ -92,20 +92,23 @@ impl<'a>  Consensus {
 			.send(BroadcastNetwork::BroadcastNodeHealth(node_healths.clone()))
 			.await
 		{
-			warn!("Unable to broadcast node_healths to network_client_tx channel: {:?}", e)
+			warn!("🏛 ⚠️  Consensus -  Receive Node Health - Unable to broadcast node_healths to network_client_tx channel: {:?}", e)
 		}
 
-		log::debug!("Calling receive node health");
 		let block_proposer_state = BlockProposerState::new(&db_pool_conn).await?;
 		let epoch = match node_healths.first() {
 			Some(first) => first.epoch.clone(), // Clone the epoch if needed
-			None => return Err(anyhow!("No node health data received").into()),
+			None => return Err(anyhow!("🏛 ⚠️  Consensus -  Receive Node Health - No node health data received").into()),
 		};
 		let block_proposer = match block_proposer_state.load_block_proposer(self.cluster_address, epoch).await? {
 			Some(proposer) => proposer,
-			None => return Err(anyhow!("No block proposer for epoch {}", epoch).into()),
+			None => return Err(anyhow!("🏛 ⚠️  Consensus -  Receive Node Health - No block proposer for epoch {}", epoch).into()),
 		};
+
+		debug!("🏛 Consensus -  Receive Node Health - Node address: {:?}, Block proposer address: {:?}", self.node_address, block_proposer.address);
 		if self.node_address == block_proposer.address {
+
+			debug!("🏛 Consensus -  Receive Node Health - Storing node health reports");
 			for node_health in node_healths {
 				let measured_peer_id = node_health.measured_peer_id.clone();
 				self.node_health_reports
@@ -125,11 +128,11 @@ impl<'a>  Consensus {
 			.send(BroadcastNetwork::BroadcastSignedNodeHealth(signed_node_healths.clone()))
 			.await
 		{
-			warn!("Unable to broadcast signed_node_healths to network_client_tx channel: {:?}", e)
+			warn!("🏛 ⚠️  Consensus -  Receive Signed Node Health - Unable to broadcast signed_node_healths to network_client_tx channel: {:?}", e)
 		}
 
-		log::debug!("Calling receive signed node health");
 		for signed_node_health in signed_node_healths {
+			let debug_peer_id = signed_node_health.node_health.peer_id.clone();
 			if signed_node_health.verify_signature().await.is_ok() {
 				let node_health_state = NodeHealthState::new(&db_pool_conn).await?;
 				let node_health = NodeHealth{
@@ -145,28 +148,29 @@ impl<'a>  Consensus {
 					node_health_version: signed_node_health.node_health.node_health_version
 				};
 				node_health_state.store_node_health(&node_health).await?;
+				debug!("🏛 Consensus -  Receive Signed Node Health - Stored node health successfully for peer_id: {:?}", debug_peer_id);
 			} else {
-				warn!("Invalid signature on signed node health: {:?}", signed_node_health.node_health.peer_id);
+				warn!("🏛 ⚠️  Consensus -  Receive Signed Node Health - Invalid signature on signed node health: {:?}", debug_peer_id);
 			}
 		}
-		info!("Stored node health successfully");
+		info!("🏛 Consensus -  Recieved Signed Node Health - Stored node health successfully");
 		Ok(())
     }
 
     pub async fn aggregate_and_broadcast_node_health(&mut self, db_pool_conn: &'a DbTxConn<'a>, epoch: u64) -> Result<(), Error> {
-		debug!("Calling aggregate and broadcast node health");
+		debug!("🏛 Consensus -  Aggregate and Broadcast Node Health - Aggregating Node Health for Epoch: {}", epoch);
         let node_health_state = NodeHealthState::new(&db_pool_conn).await?;
 		let block_proposer_state = BlockProposerState::new(&db_pool_conn).await?;
 		let block_proposer = match block_proposer_state.load_block_proposer(self.cluster_address, epoch).await? {
 			Some(proposer) => proposer,
-			None => return Err(anyhow!("No block proposer for epoch {}", epoch).into()),
+			None => return Err(anyhow!("🏛 Consensus -  Aggregate and Broadcast Node Health - No block proposer for epoch {}", epoch).into()),
 		};
 		let mut signed_healths: Vec<NodeHealthPayload> = Vec::new();
 
-		log::debug!("aggregate_and_broadcast_node_health ~ Node address: {:?}, Block proposer address: {:?}", self.node_address, block_proposer.address);
+		debug!("🏛 Consensus -  Aggregate and Broadcast Node Health - Node address: {:?}, Block proposer address: {:?}", self.node_address, block_proposer.address);
 		if self.node_address == block_proposer.address {
 			let aggregated_health = NodeHealth::aggregate_network_health(std::mem::take(&mut self.node_health_reports));
-			log::debug!("aggregate_and_broadcast_node_health ~ Aggregated health: {:?}", aggregated_health);
+			debug!("🏛 Consensus -  Aggregate and Broadcast Node Health - Aggregated health: {:?}", aggregated_health);
 			for (_, health) in aggregated_health {
 				let json_str = serde_json::to_string(&health)?;
 				let message = Message::from_hashed_data::<sha256::Hash>(json_str.as_bytes());
@@ -177,20 +181,20 @@ impl<'a>  Consensus {
 					verifying_key: self.verifying_key.serialize().to_vec(),
 					sender: self.node_address,
 				};
-				log::debug!("aggregate_and_broadcast_node_health ~ Epoch: {:?}, Signed health: {:?}, Sender: {:?}", epoch, signed_health, self.node_address);
+				debug!("🏛 Consensus -  Aggregate and Broadcast Node Health - Epoch: {:?}, Signed health: {:?}, Sender: {:?}", epoch, signed_health, self.node_address);
 				signed_healths.push(signed_health);
 				node_health_state.store_node_health(&health).await?;
 			}
 
-			log::debug!("aggregate_and_broadcast_node_health ~ Multinode mode: {:?}", self.multinode_mode);
+			debug!("🏛 Consensus -  Aggregate and Broadcast Node Health - Multinode mode: {:?}", self.multinode_mode);
 			if self.multinode_mode {
-				log::debug!("aggregate_and_broadcast_node_health ~ Sending BroadcastNetwork::BroadcastSignedNodeHealth event to network_client_tx channel, epoch: {:?}, signed_healths: {:?}", epoch, signed_healths);
+				debug!("🏛 Consensus -  Aggregate and Broadcast Node Health - Sending BroadcastNetwork::BroadcastSignedNodeHealth event to network_client_tx channel, epoch: {:?}, signed_healths: {:?}", epoch, signed_healths);
 				if let Err(e) = self.network_client_tx.send(BroadcastNetwork::BroadcastSignedNodeHealth(signed_healths)).await {
-					warn!("Failed to broadcast aggregated node health: {:?}", e);
+					warn!("🏛 ⚠️  Consensus -  Aggregate and Broadcast Node Health - Failed to broadcast aggregated node health: {:?}", e);
 				}
 			}
 		}
-		info!("aggregate_and_broadcast_node_health ~ Broadcasted aggregated node health");
+		info!("🏛 Consensus -  Aggregate and Broadcast Node Health - Broadcasted aggregated node health");
         Ok(())
     }
 
@@ -204,7 +208,7 @@ impl<'a>  Consensus {
 			.send(BroadcastNetwork::BroadcastNodeInfo(node_info.clone()))
 			.await
 		{
-			warn!("Unable to broadcast node_info to network_client_tx channel: {:?}", e)
+			warn!("🏛 ⚠️  Consensus -  Receive Node Info - Unable to broadcast node_info to network_client_tx channel: {:?}", e)
 		}
 
 		// Only store if the node info is valid
@@ -221,17 +225,17 @@ impl<'a>  Consensus {
 		db_pool_conn: &'a DbTxConn<'a>,
 	) -> Result<(), Error> {
 		let block_number = block_payload.block.block_header.block_number;
-		debug!("Node has received new block #{} from the network", block_number);
+		debug!("🏛 Consensus -  Recieved Validate Block - Node has received new block #{} from the network", block_number);
 	
 		// First check if block is already executed to avoid duplicate work
 		let block_state = BlockState::new(&db_pool_conn).await?;
 		if let Ok(true) = block_state.is_block_executed(block_number, &self.cluster_address).await {
-			info!("Block #{} is already executed, skipping validation", block_number);
+			info!("🏛 Consensus -  Recieved Validate Block - Block #{} is already executed, skipping validation", block_number);
 			// Still broadcast the block to ensure network-wide propagation
 			if let Err(e) = self
 				.network_client_tx
 				.send(BroadcastNetwork::BroadcastValidateBlock(block_payload)).await {
-				warn!("Unable to write block to network_client_tx channel: {:?}", e)
+				warn!("🏛 ⚠️  Consensus -  Recieved Validate Block - Unable to write block to network_client_tx channel: {:?}", e)
 			}
 			return Ok(());
 		}
@@ -247,7 +251,7 @@ impl<'a>  Consensus {
 				match Account::address(&block_payload.verifying_key) {
 					Ok(proposer_from_key) => {
 						if proposer_from_key != authorized_proposer.address {
-							warn!("Block #{} from unauthorized proposer {} (expected: {})",
+							warn!("🏛 ⚠️  Consensus -  Recieved Validate Block - Block #{} from unauthorized proposer {} (expected: {})",
 								block_number,
 								hex::encode(proposer_from_key),
 								hex::encode(authorized_proposer.address)
@@ -260,25 +264,25 @@ impl<'a>  Consensus {
 								.send(BroadcastNetwork::BroadcastValidateBlock(block_payload))
 								.await
 							{
-								warn!("Unable to forward unauthorized block: {:?}", e)
+								warn!("🏛 ⚠️  Consensus -  Recieved Validate Block - Unable to forward unauthorized block: {:?}", e)
 							}
 							return Ok(());
 						}
 					},
 					Err(e) => {
-						warn!("Failed to derive address from verifying key for block #{}: {}", 
+						warn!("🏛 ⚠️  Consensus -  Recieved Validate Block - Failed to derive address from verifying key for block #{}: {}", 
 							  block_number, e);
 						return Ok(());
 					}
 				}
 			},
 			Ok(None) => {
-				warn!("No authorized proposer found for epoch {} while validating block #{}", 
+				warn!("🏛 ⚠️  Consensus -  Recieved Validate Block - No authorized proposer found for epoch {} while validating block #{}", 
 					  current_epoch, block_number);
 				// We don't validate further due to missing proposer info
 			},
 			Err(e) => {
-				warn!("Error loading block proposer for epoch {} while validating block #{}: {}", 
+				warn!("🏛 ⚠️  Consensus -  Recieved Validate Block - Error loading block proposer for epoch {} while validating block #{}: {}", 
 					  current_epoch, block_number, e);
 				// We don't validate further due to proposer loading error
 			}
@@ -287,7 +291,7 @@ impl<'a>  Consensus {
 		// If we reach here, either the block has passed validation or we're skipping validation
 		// due to missing proposer information
 		self.pending_blocks.add_block(block_payload.clone());
-		info!("Added block #{} to pending blocks queue", block_number);
+		info!("🏛 Consensus -  Recieved Validate Block - Added block #{} to pending blocks queue", block_number);
 	
 		// Prepare for broadcasting - create a new payload with our node as the sender
 		let block_payload_to_broadcast = BlockPayload {
@@ -303,14 +307,14 @@ impl<'a>  Consensus {
 			.send(BroadcastNetwork::BroadcastValidateBlock(block_payload_to_broadcast))
 			.await
 		{
-			warn!("Unable to write block to network_client_tx channel: {:?}", e)
+			warn!("🏛 ⚠️  Consensus -  Recieved Validate Block - Unable to write block to network_client_tx channel: {:?}", e)
 		}
 	
 		// Try to finalize any pending blocks that may now be ready
 		match self.pending_blocks.try_to_finalize(&db_pool_conn, self.pool_address).await {
-			Ok(_) => debug!("Successfully checked pending blocks after receiving block"),
+			Ok(_) => debug!("🏛 Consensus -  Recieved Validate Block - Successfully checked pending blocks after receiving block"),
 			Err(e) => {
-				warn!("Error while finalizing pending blocks after receiving block #{}: {}", 
+				warn!("🏛 ⚠️  Consensus -  Recieved Validate Block - Error while finalizing pending blocks after receiving block #{}: {}", 
 					  block_number, e)
 			}
 		}
@@ -351,7 +355,7 @@ impl<'a>  Consensus {
 				))
 				.await
 			{
-				warn!("Unable to write block_proposer to network_client_tx channel: {:?}", e)
+				warn!("🏛 ⚠️  Consensus -  Recieved Block Proposer - Unable to write block_proposer to network_client_tx channel: {:?}", e)
 			}
 		}
 		Ok(())
@@ -359,7 +363,7 @@ impl<'a>  Consensus {
 
 	pub async fn receive_vote(&mut self, vote: Vote, db_pool_conn: &'a DbTxConn<'a>,) -> Result<(), Error> {
 
-		debug!("receive_vote ~ Received vote from network_client_tx channel, Block #: {:?}, Validator address: {:?}", vote.data.block_number, hex::encode(vote.validator_address));
+		debug!("🏛 Consensus -  Recieved Vote - Received vote from network_client_tx channel, Block #: {:?}, Validator address: {:?}", vote.data.block_number, hex::encode(vote.validator_address));
 
 		let block_proposer_address = Account::address(&self.verifying_key.serialize().to_vec())?;
 
@@ -391,24 +395,26 @@ impl<'a>  Consensus {
 		self.pending_blocks.add_vote(vote.clone());
 
 		let all_votes = self.pending_blocks.all_votes(vote.data.block_number);
-		debug!("receive_vote ~ All votes for Block #:{}, Votes Length: {:?}", vote.data.block_number, all_votes.len());
+		debug!("🏛 Consensus -  Recieved Vote - All votes for Block #:{}, Votes Length: {:?}", vote.data.block_number, all_votes.len());
 		for v in all_votes {
-			debug!("receive_vote ~ Vote Details ~ Block #: {:?}, Validator Address: {:?}", v.data.block_number, hex::encode(v.validator_address));
+			debug!("🏛 Consensus -  Recieved Vote - Vote Details ~ Block #: {:?}, Validator Address: {:?}", v.data.block_number, hex::encode(v.validator_address));
 		}
 
 		let validator_state = ValidatorState::new(&db_pool_conn).await?;
 		let validators = validator_state
 			.load_all_validators(vote.data.epoch)
 			.await?
-			.ok_or(anyhow!("No validators selected for this epoch"))?;
+			.ok_or(anyhow!("🏛 ⚠️  Consensus -  Recieved Vote - No validators selected for this epoch"))?;
 
-		info!("Validators  #{:?}", validators);
+		let validators_str = validators.iter().map(|v| hex::encode(v.address)).collect::<Vec<String>>().join(", ");
+
+		info!("🏛 Consensus -  Recieved Vote - Selected Validators for Block #{}: , Epoch: {:?}, Validators: {:?}", vote.data.block_number, vote.data.epoch, validators_str);
 
 		let vote_result = self.pending_blocks.try_to_vote_result(vote.data.block_number, &self.secret_key, &self.verifying_key, block_proposer_address, validators.clone(), db_pool_conn, self.pool_address).await?;
 
 		self.pending_blocks.add_vote_result(vote_result.clone());
 
-		info!("Generated VoteResult for block #{}, Validator address: {:?}", vote.data.block_number, hex::encode(vote_result.validator_address));
+		info!("🏛 Consensus -  Recieved Vote - Generated VoteResult for block #{}, Validator address: {:?}", vote.data.block_number, hex::encode(vote_result.validator_address));
 		
 
 		if self.multinode_mode {
@@ -417,11 +423,11 @@ impl<'a>  Consensus {
 				.send(BroadcastNetwork::BroadcastVoteResult(vote_result.clone()))
 				.await
 			{
-				warn!("Unable to write generated vote result to network_client_tx channel: {:?}", e)
+				warn!("🏛 ⚠️  Consensus -  Recieved Vote - Unable to write generated vote result to network_client_tx channel: {:?}", e)
 			}
 			if let Err(e) = self.network_client_tx.send(BroadcastNetwork::BroadcastVote(vote)).await
 			{
-				warn!("Unable to write generated vote to network_client_tx channel: {:?}", e)
+				warn!("🏛 ⚠️  Consensus -  Recieved Vote - Unable to write generated vote to network_client_tx channel: {:?}", e)
 			}
 			let _ = self.pending_blocks.try_to_finalize(&db_pool_conn, self.pool_address).await;
 		}
@@ -438,7 +444,7 @@ impl<'a>  Consensus {
 				.send(BroadcastNetwork::BroadcastVoteResult(vote_result))
 				.await
 			{
-				warn!("Unable to write vote result to network_client_tx channel: {:?}", e)
+				warn!("🏛 ⚠️  Consensus -  Recieved Vote Result - Unable to write vote result to network_client_tx channel: {:?}", e)
 			}
 		}
 
@@ -446,7 +452,7 @@ impl<'a>  Consensus {
 	}
 
 	pub async fn receive_block(&mut self, block_payload: BlockPayload, vote_result: Option<VoteResult>, db_pool_conn: &'a DbTxConn<'a>) -> Result<(), Error> {
-		debug!("Node has received finalized block from the network");
+		debug!("🏛 Consensus -  Recieved Block - Node has received finalized Block #{} from the network", block_payload.block.block_header.block_number);
 		// Check if the block is already executed
 		let block_state = BlockState::new(&db_pool_conn).await?;
 
@@ -492,14 +498,12 @@ impl<'a>  Consensus {
 					ExecuteBlock::execute_block(&block_payload.block, self.event_tx.clone(), &db_pool_conn).await?;
 				self.broadcast_events(events);
 
-				info!(
-					"Block #{} has been executed and finalized",
-					block_payload.block.block_header.block_number
+				info!("🏛 Consensus -  Recieved Block - Block #{} has been executed and finalized", block_payload.block.block_header.block_number
 				);
 				self.pending_blocks.try_to_finalize(&db_pool_conn, self.pool_address).await?;
 			}
 			Err(e) => warn!(
-				"Received block #{} is not valid: {:?}",
+				"🏛 ⚠️  Consensus -  Recieved Block - Block #{} is not valid: {:?}",
 				block_payload.block.block_header.block_number, e
 			),
 		}
@@ -540,7 +544,7 @@ impl<'a>  Consensus {
 	}
 
 	pub async fn handle_ping_result(&mut self, peer_id: String, is_success: bool, rtt: u64) {
-		log::debug!("handle_ping_result ~ Adding ping result for peer: {:?}, Is success: {:?}, RTT: {:?}", peer_id, is_success, rtt);
+		debug!("🏛 Consensus -  Handle Ping Result - Adding ping result for peer: {:?}, Is success: {:?}, RTT: {:?}", peer_id, is_success, rtt);
         self.real_time_checks.add_check(peer_id, is_success, rtt);
     }
 
@@ -551,8 +555,8 @@ impl<'a>  Consensus {
 	pub async fn process_health_update(&mut self, epoch: u64, db_pool_conn: &'a DbTxConn<'a>) -> Result<(), Error>{
 		// Find the maximum length in the vectors and resize all the reports with max length - 1
 
-		log::debug!("process_health_update ~ Real time checks > online_checks: {:?}", self.real_time_checks.online_checks.clone());
-		log::debug!("process_health_update ~ Real time checks > eligible_peers: {:?}", self.real_time_checks.eligible_peers.clone());
+		debug!("🏛 Consensus -  Process Health Update - Real time checks > online_checks: {:?} for epoch: {}", self.real_time_checks.online_checks.clone(), epoch);
+		debug!("🏛 Consensus -  Process Health Update - Real time checks > eligible_peers: {:?} for epoch: {}", self.real_time_checks.eligible_peers.clone(), epoch);
 		let max_length = match self.real_time_checks.online_checks.values().map(Vec::len).max() {
 			Some(len) if len > 1 => len,
 			_ => return Err(anyhow!("Insufficient data for processing for epoch: {}", epoch)),
@@ -572,8 +576,7 @@ impl<'a>  Consensus {
 			self.node_address,
 		);
 		let is_block_proposer = block_proposer_manager.is_block_proposer(block_proposer, db_pool_conn).await?;
-		log::debug!("process_health_update ~ Is block proposer: {:?}", is_block_proposer);
-		log::debug!("process_health_update ~ Real time checks: {:?}", self.real_time_checks.online_checks.clone());
+		debug!("🏛 Consensus -  Process Health Update - Is block proposer: {:?}", is_block_proposer);
 
 		for (measured_peer_id, _) in self.real_time_checks.online_checks.clone() {
 			let health_report = match self.real_time_checks.create_health_report(
@@ -584,12 +587,12 @@ impl<'a>  Consensus {
 			) {
 				Ok(report) => report,
 				Err(e) => {
-					log::error!("Failed to create health report for peer {}: {}", measured_peer_id, e);
+					error!("🏛 🚨  Consensus -  Process Health Update - Failed to create health report for peer {}: {}", measured_peer_id, e);
 					continue;
 				}
 			};
 
-			log::debug!("process_health_update ~ Health report: {:?}", health_report);
+			debug!("🏛 Consensus -  Process Health Update - Health report: {:?}", health_report);
 
 			// Include health report into network health reports if node is a block proposer
 			if is_block_proposer {
@@ -602,7 +605,7 @@ impl<'a>  Consensus {
 			health_reports.push(health_report);
 		}
 		if let Err(e) = self.network_client_tx.send(BroadcastNetwork::BroadcastNodeHealth(health_reports)).await {
-			log::error!("Failed to send OutboundNodeHealth event: {}", e);
+			error!("🏛 🚨  Consensus -  Process Health Update - Failed to send OutboundNodeHealth event: {}", e);
 		}
 
 		// Clear checks and remove stale entries
@@ -614,7 +617,7 @@ impl<'a>  Consensus {
 	pub fn broadcast_events(&self, events: Vec<EventData>) {
 		for event in events {
 			if let Err(err) = self.node_event_tx.send(event) {
-				warn!("Failed to publish ReceiveBlock event due to {:?}", err);
+				warn!("🏛 ⚠️  Consensus -  Broadcast Events - Failed to publish ReceiveBlock event due to {:?}", err);
 			}
 		}
 	}
@@ -629,26 +632,26 @@ impl<'a>  Consensus {
 		let authorized_block_proposer = block_proposer_state.load_block_proposer(self.cluster_address, current_epoch).await?.ok_or(anyhow!("No authorized block proposer for epoch : {}", current_epoch))?;
 								
 		if authorized_block_proposer.address != self.node_address {
-			return Err(anyhow!("Node is not an authorized block proposer for epoch: {}", current_epoch));
+			return Err(anyhow!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Node is not an authorized block proposer for epoch: {}", current_epoch));
 		}
 
 		let block_state = BlockState::new(&db_pool_conn).await?;
 		let is_block_stored = block_state.is_block_header_stored(block_number).await?;
 		if is_block_stored {
-			warn!("Drop Block #{} because it's already stored", block_number);
+			warn!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Drop Block #{} because it's already stored", block_number);
 			// Block is already present
-			return Err(anyhow!("Block #{} is already stored", block_number));
+			return Err(anyhow!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Block #{} is already stored", block_number));
 		}
 
 		// Expire old pending blocks
 		let expired = self.pending_blocks.expire_old_blocks(PENDING_BLOCK_EXPIRATION_TIME);
-		warn!("Expired pending blocks: {:?}", expired);
+		warn!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Expired pending blocks: {:?}", expired);
 		
 		// NEW LOGIC: Only refuse if there are pending blocks that are not finalized
 		let pending_blocks = self.pending_blocks.get_blocks();
 		if pending_blocks.contains_key(&block_number) {
 			return Err(anyhow!(
-				"Cannot add block #{} because it's already pending", 
+				"🏛 ⚠️  Consensus -  Add and Broadcast Block - Cannot add block #{} because it's already pending", 
 				block_number
 			));
 		}
@@ -657,7 +660,7 @@ impl<'a>  Consensus {
 			// If there are pending blocks, ensure they are for the previous block
 			if !pending_blocks.contains_key(&(block_number - 1)) {
 				return Err(anyhow!(
-					"Cannot add block #{} because previous block is not yet finalized. Pending blocks: {:?}", 
+					"🏛 ⚠️  Consensus -  Add and Broadcast Block - Cannot add block #{} because previous block is not yet finalized. Pending blocks: {:?}", 
 					block_number, 
 					pending_blocks.keys().collect::<Vec<_>>()
 				));
@@ -672,13 +675,13 @@ impl<'a>  Consensus {
 			let previous_block_proposer = Account::address(&pending_block_payload.verifying_key)?;
 			// Check if the block is proposed by the same block proposer
 			if block_proposer_address == previous_block_proposer {
-				warn!("Received block: {} from same block proposer. Broadcasting the block again", block_number);
+				warn!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Received block: {} from same block proposer. Broadcasting the block again", block_number);
 				// broadcast block again if same block is proposed by an existing block proposer
 				self.broadcast_new_block(pending_block_payload.clone()).await?;
 				if let Some(vote) = pending_blocks.all_votes().into_iter().find(|v| v.verifying_key == block_payload.verifying_key) {
 					self.broadcast_vote(vote.clone()).await?;
 				}
-				return Err(anyhow!("Block already present in pending list"));
+				return Err(anyhow!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Block already present in pending list"));
 			}
 		}
 		
@@ -689,14 +692,14 @@ impl<'a>  Consensus {
 				.ok_or(anyhow!("Pending block missing block data"))?;
 			
 			if existing_block.block.block_header.block_hash != block_payload.block.block_header.block_hash {
-				warn!("Block hash mismatch for #{}: existing {} vs new {}",
+				warn!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Block hash mismatch for #{}: existing {} vs new {}",
 					block_number,
 					hex::encode(existing_block.block.block_header.block_hash),
 					hex::encode(block_payload.block.block_header.block_hash));
 				
 				// Clear conflicting pending block
 				self.pending_blocks.remove_block(block_number);
-				return Err(anyhow!("Conflicting block hash detected for #{}", block_number));
+				return Err(anyhow!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Conflicting block hash detected for #{}", block_number));
 			}
 		}
 
@@ -721,7 +724,7 @@ impl<'a>  Consensus {
 		// broadcast block
 		self.broadcast_new_block(block_payload.clone()).await?;
 
-		debug!("add_and_broadcast_block ~ Adding Vote and Block to pending list, Block #: {:?}, Voter address: {:?}", block_payload.block.block_header.block_number, hex::encode(vote.validator_address));
+		debug!("🏛 Consensus -  Add and Broadcast Block - Adding Vote and Block to pending list, Block #: {:?}, Voter address: {:?}", block_payload.block.block_header.block_number, hex::encode(vote.validator_address));
 		// Add block to pending list
 		self.pending_blocks.add_vote(vote);
 		self.pending_blocks.add_block(block_payload);
@@ -735,17 +738,17 @@ impl<'a>  Consensus {
 			.send(BroadcastNetwork::BroadcastValidateBlock(block_payload))
 			.await
 		{
-			warn!("Unable to write block to network_client_tx channel: {:?}", e)
+			warn!("🏛 ⚠️  Consensus -  Broadcast New Block - Unable to write block to network_client_tx channel: {:?}", e)
 		}
 		Ok(())
 	}
 
 	pub async fn broadcast_vote(&self, vote: Vote) -> Result<(), Error> {
 
-		debug!("broadcast_vote ~ Broadcasting vote to network_client_tx channel, Block #: {:?}, Validator address: {:?}", vote.data.block_number, hex::encode(vote.validator_address));
+		debug!("🏛 Consensus -  Broadcast Vote - Broadcasting vote to network_client_tx channel, Block #: {:?}, Validator address: {:?}", vote.data.block_number, hex::encode(vote.validator_address));
 		if let Err(e) = self.network_client_tx.send(BroadcastNetwork::BroadcastVote(vote)).await
 		{
-			warn!("Unable to write vote to network_client_tx channel: {:?}", e)
+			warn!("🏛 ⚠️  Consensus -  Broadcast Vote - Unable to write vote to network_client_tx channel: {:?}", e)
 		}
 		Ok(())
 	}
@@ -755,25 +758,25 @@ impl<'a>  Consensus {
 			let peer_id = match PeerId::from_str(peer_id.as_str()) {
 				Ok(peer_id) => peer_id,
 				Err(e) => {
-					log::error!("Unable to calculate peer_id: {:?}", e);
+					error!("🏛 🚨  Consensus -  Request Node Status - Unable to calculate peer_id: {:?}", e);
 					continue;
 				}
 			};
 
-			debug!("request_node_status ~ Broadcasting query node status request to peer: {:?}", peer_id.clone());
+			debug!("🏛 Consensus -  Request Node Status - Broadcasting query node status request to peer: {:?}", peer_id.clone());
 
 			if let Ok(request_time) = util::generic::current_timestamp_in_millis() {
 
-				debug!("request_node_status ~ request_time: {:?}", request_time.clone());
+				debug!("🏛 Consensus -  Request Node Status - request_time: {:?}", request_time.clone());
 				
 				if let Err(e) = self
 					.network_client_tx
 					.send(BroadcastNetwork::BroadcastQueryNodeStatusRequest(request_time, peer_id)).await
 				{
-					warn!("Unable to write vote to network_client_tx channel: {:?}", e)
+					warn!("🏛 ⚠️  Consensus -  Request Node Status - Unable to write vote to network_client_tx channel: {:?}", e)
 				}
 			} else {
-				error!("Unable to get current timestamp");
+				error!("🏛 🚨  Consensus -  Request Node Status - Unable to get current timestamp");
 			}
 
 		}
@@ -790,7 +793,7 @@ impl<'a>  Consensus {
 			match block_manager_cache.get_last_executed_block_header().await {
 				Ok(block_header) => block_header.block_number,
 				Err(e) => {
-					warn!("Failed to get current block: {:?}", e);
+					warn!("🏛 ⚠️  Consensus -  Handle Publish Node Detailed Status - Failed to get current block: {:?}", e);
 					0
 				},
 			}
@@ -801,7 +804,7 @@ impl<'a>  Consensus {
 			match self.get_mempool_size().await {
 				Ok(size) => size,
 				Err(e) => {
-					warn!("Failed to get mempool size: {:?}", e);
+					warn!("🏛 ⚠️  Consensus -  Handle Publish Node Detailed Status - Failed to get mempool size: {:?}", e);
 					0
 				},
 			}
@@ -825,8 +828,8 @@ impl<'a>  Consensus {
 		};
 
 		match self.network_client_tx.send(BroadcastNetwork::BroadcastNodeDetailedStatus(node_detailed_status.clone())).await {
-			Ok(_) => debug!("ID: NODE_DETAILED_STATUS, handle_publish_node_detailed_status ~ Successfully sent node detailed status to network_client_tx channel, with peer_id: {:?}, node_detailed_status: {:?}", peer_id, node_detailed_status),
-			Err(e) => warn!("ID: NODE_DETAILED_STATUS, handle_publish_node_detailed_status ~ Failed to send node detailed status to peer: {:?}", e),
+			Ok(_) => debug!("🏛 Consensus -  Handle Publish Node Detailed Status - Successfully sent node detailed status to network_client_tx channel, with peer_id: {:?}, node_detailed_status: {:?}", peer_id, node_detailed_status),
+			Err(e) => warn!("🏛 ⚠️  Consensus -  Handle Publish Node Detailed Status - Failed to send node detailed status to peer: {:?}", e),
 		};
 		Ok(())
 	}
@@ -837,7 +840,7 @@ impl<'a>  Consensus {
 		let last_update_time = util::generic::current_timestamp_in_millis().unwrap_or_default();
 		let peer_id = PeerId::from_str(&node_detailed_status.peer_id).map_err(|e| anyhow!("Unable to get peer_id: {:?}", e))?;
 
-		debug!("ID: NODE_DETAILED_STATUS, handle_receive_node_detailed_status ~ Received node detailed status from peer: {:?}, node_detailed_status: {:?}", peer_id, node_detailed_status.clone());
+		debug!("🏛 Consensus -  Handle Receive Node Detailed Status - Received node detailed status from peer: {:?}, node_detailed_status: {:?}", peer_id, node_detailed_status.clone());
 		match network_state.update_active_peer_status_info(peer_id, PeerStatusInfo{
 			current_block: Some(node_detailed_status.current_block),
 			pending_transactions: Some(node_detailed_status.pending_transactions),
@@ -845,8 +848,8 @@ impl<'a>  Consensus {
 			uptime_seconds: Some(node_detailed_status.uptime_seconds),
 			last_update_time: Some(last_update_time as u64),
 		}).await {
-			Ok(_) => debug!("ID: NODE_DETAILED_STATUS, handle_receive_node_detailed_status ~ Successfully updated node detailed status for peer: {:?}", peer_id),
-			Err(e) => warn!("ID: NODE_DETAILED_STATUS, handle_receive_node_detailed_status ~ Failed to update node detailed status for peer: {:?}", e),
+			Ok(_) => debug!("🏛 Consensus -  Handle Receive Node Detailed Status - Successfully updated node detailed status for peer: {:?}", peer_id),
+			Err(e) => warn!("🏛 ⚠️  Consensus -  Handle Receive Node Detailed Status - Failed to update node detailed status for peer: {:?}", e),
 		};
 
 		Ok(())
@@ -879,17 +882,8 @@ pub async fn select_and_store_validators_and_proposer<'a>(epoch: Epoch,
 		)
 		.await?;
 
-	let mut validator_print = String::new();
-	for v in &selected_validators {
-		let s = format!("\t{}\n", v);
-		validator_print.push_str(&s);
-	}
-	info!(
-			"Selected {} validators for epoch {}: \n{}",
-			selected_validators.len(),
-			epoch,
-			validator_print
-		);
+	let validator_str = selected_validators.iter().map(|v| hex::encode(v.address)).collect::<Vec<String>>().join(", ");
+	info!("🏛 Consensus -  Select Validators and Proposer - Selected Validators for Epoch: {}, Validators: {}",epoch,validator_str);
 
 	// Store selected validators in validator state
 	let validator_state = ValidatorState::new(db_pool_conn).await?;
@@ -907,6 +901,6 @@ pub async fn select_and_store_validators_and_proposer<'a>(epoch: Epoch,
 	}
 	
 	let block_proposer = block_proposer_manager.select_block_proposers(epoch, last_block_header, eligible_block_proposers, db_pool_conn).await?;
-	info!("Block proposer: {} selected for epoch: {}", hex::encode(block_proposer), epoch);
+	info!("🏛 Consensus -  Select Validators and Proposer - Selected Block Proposer for Epoch: {}, Block Proposer: {}", epoch, hex::encode(block_proposer));
 	Ok(())
 }

@@ -175,24 +175,27 @@ impl<'a> PendingBlock {
 
 		// Iterate Votes to hex::encode
 		for v in votes.clone() {
-			debug!("try_to_vote_result ~ Votes ~ Validator address: {:?}, for block #{}, epoch: {}", hex::encode(v.validator_address), v.data.block_number, v.data.epoch);
+			debug!("🤝 Consensus | Block #{} | Vote | Validator: {} | Epoch: {}", v.data.block_number, hex::encode(v.validator_address), v.data.epoch);
 		}
 		// Iterate Validators to hex::encode
-		debug!("try_to_vote_result ~ Votes: {:?}", votes);
+		
 		if let Some(vote_) = votes.get(0) {
 			let block_number = vote_.data.block_number;
 			let block_hash = vote_.data.block_hash;
 			let cluster_address = vote_.data.cluster_address;
+
+			debug!("🤝 Consensus | Block #{} | Votes Received | Count: {}", block_number, votes.len());
+
 			let result = vote_result_manager::VoteResultManager::try_to_generate_vote_result(
 				block_number, block_hash, cluster_address, self.all_votes(), secret_key, verifying_key, block_proposer_address, validators, db_pool_conn, &pool_address).await?;
 			if let Some(vote_result) = result {
 				Ok(vote_result)
 			} else {
-				Err(anyhow!("try_to_vote_result ~ vote_result_manager::VoteResultManager::try_to_generate_vote_result ~ Can't generate VoteResult block #{}", block_number))
+				Err(anyhow!("🤝 Consensus | Block #{} | Vote Result Generation Failed | Insufficient Votes", block_number))
 			}
 		} else {
 			let block_number = self.get_block().and_then(|b| Some(b.block.block_header.block_number));
-			Err(anyhow!("try_to_vote_result ~ self.get_block().and_then ~ Can't generate VoteResult block #{:?}", block_number))
+			Err(anyhow!("🤝 Consensus | Block #{:?} | Vote Result Generation Failed | Block Not Found", block_number))
 		}
 	}
 
@@ -208,7 +211,7 @@ impl<'a> PendingBlock {
 		if let Some(max_block_height) = &rt_config.max_block_height {
 			if block_payload.block.block_header.block_number >= *max_block_height as BlockNumber {
 				error!("Node has reached the maximum configured block height: {}. Please upgrade or modify the configuration to continue.", max_block_height);
-				return Err(anyhow!("Blockchain has reached the configured stopping block number: {}", max_block_height));
+				return Err(anyhow!("🤝 Consensus | Block #{} | Max Height Reached | Limit: {}", block_payload.block.block_header.block_number, max_block_height));
 			}
 		}
 		let last_block_votes_validators = self.get_last_block_votes_validators(db_pool_conn, rt_config.clone()).await?;
@@ -221,7 +224,7 @@ impl<'a> PendingBlock {
 		let mut validators = validator_state
 			.load_all_validators(block_payload.block.block_header.epoch)
 			.await?
-			.ok_or(anyhow!("No validators selected for this epoch"))?;
+			.ok_or(anyhow!("🤝 Consensus | Epoch {} | Validator Selection Failed | No Validators Found", block_payload.block.block_header.epoch))?;
 
 		
 		let mut added_org_nodes = 0;
@@ -241,18 +244,18 @@ impl<'a> PendingBlock {
 		}
 
 		if added_org_nodes > 0 {
-			debug!("Added {} org nodes as backup validators", added_org_nodes);
+			debug!("🤝 Consensus | Added Backup Validators | Count: {} | Type: Org Nodes", added_org_nodes);
 			// Reload validators with new backups
 			validators = validator_state
 				.load_all_validators(block_payload.block.block_header.epoch)
 				.await?
-				.ok_or(anyhow!("No validators available after adding backups"))?;
+				.ok_or(anyhow!("🤝 Consensus | Epoch {} | Validator Selection Failed | No Validators After Backup Addition", block_payload.block.block_header.epoch))?;
 		}
 
 		
 		let block_proposer_address = Account::address(&self.verifying_key.serialize().to_vec())?;
 
-		let mut block_proposer_manager = BlockProposerManager {};
+		let block_proposer_manager = BlockProposerManager {};
 		let block_proposer = BlockProposer::new(
 			block_payload.block.block_header.cluster_address,
 			block_payload.block.block_header.epoch,
@@ -263,13 +266,18 @@ impl<'a> PendingBlock {
 		// publish vote if and only if node is a validator, not a block proposer
 		let is_validator = validator_state.is_validator(&self.node_address, block_payload.block.block_header.epoch).await?;
 		let is_block_proposer = block_proposer_manager.is_block_proposer(block_proposer, &db_pool_conn).await?;
-		debug!("try_to_finalize ~ Epoch: {}, Node Address: {:?}, is_validator: {:?}, is_block_proposer: {:?}", block_payload.block.block_header.epoch, hex::encode(self.node_address), is_validator, is_block_proposer);
+		debug!("🤝 Consensus | Block #{} | Epoch: {} | Node: {} | Status: Validator: {} | Proposer: {}", 
+			block_payload.block.block_header.block_number,
+			block_payload.block.block_header.epoch, 
+			hex::encode(self.node_address),
+			is_validator,
+			is_block_proposer);
 
 		// if is_validator && !is_block_proposer
 		if is_validator || is_block_proposer
 		{
 			let vote = if let Some(vote) = self.votes.iter().find(|vote| vote.verifying_key == self.verifying_key.serialize().to_vec()).cloned() {
-				debug!("try_to_finalize ~ Vote found: {:?}", hex::encode(vote.validator_address));
+				debug!("🤝 Consensus | Block #{} | Vote Found | Validator: {}", block_payload.block.block_header.block_number, hex::encode(vote.validator_address));
 				vote
 			} else {
 				let valid_block = true;
@@ -290,20 +298,20 @@ impl<'a> PendingBlock {
 					self.verifying_key.serialize().to_vec(),
 				);
 
-				debug!("try_to_finalize ~ Vote added: {:?}", hex::encode(vote.validator_address));
+				debug!("🤝 Consensus | Block #{} | Vote Added | Validator: {}", block_payload.block.block_header.block_number, hex::encode(vote.validator_address));
 
 				self.add_vote(vote.clone());
 				vote
 			};
 
-			debug!("try_to_finalize ~ Broadcasting vote to network_client_tx channel, Block #: {:?}, Validator address: {:?}", vote.data.block_number, hex::encode(vote.validator_address));
+			debug!("🤝 Consensus | Block #{} | Broadcasting Vote | Validator: {}", vote.data.block_number, hex::encode(vote.validator_address));
 			if let Err(e) =
 				self.network_client_tx.send(BroadcastNetwork::BroadcastVote(vote)).await
 			{
-				warn!("Unable to write vote to network_client_tx channel: {:?}", e)
+				warn!("🤝 ⚠️ Consensus | Network Error | Failed to Broadcast Vote | Error: {}", e);
 			}
 		} else {
-			warn!("Node is not a validator or node is a block proposer for Block #{}", block_payload.block.block_header.block_number);
+			warn!("🤝 ⚠️ Consensus | Block #{} | Seems I am Peer Node (Neither Validator nor Proposer)", block_payload.block.block_header.block_number);
 		}
 
 		self.validate_vote_results(db_pool_conn).await?;
@@ -320,7 +328,9 @@ impl<'a> PendingBlock {
 				block_timestamp
 			)
 			.await?;
-			debug!("try_to_finalize ~ VoteResult for block #{}:, Validator address: {:?}, Passed: {:?}", v.data.block_number, hex::encode(v.validator_address), passed);
+			
+			debug!("🤝 Consensus | Block #{} | Vote Result | Validator: {} | Passed: {}", v.data.block_number, hex::encode(v.validator_address), passed);
+			
 			if passed {
 				passed_vote_result = Some(v.clone());
 				break; // stop after finding the first passing vote
@@ -340,15 +350,15 @@ impl<'a> PendingBlock {
 					new_epoch,
 					&last_block_header,
 					db_pool_conn
-				).await.map_err(|error| anyhow!("Unable to select new block proposer or validators: {:?}", error))?;
+				).await.map_err(|error| anyhow!("🤝 Consensus | Block #{} | Epoch {} | Proposer Selection Failed | Error: {}", block_number, new_epoch, error))?;
 			}
 
 			// store vote_result
 			let vote_state = VoteResultState::new(&db_pool_conn).await?;
 			vote_state.store_vote_result(&vote_result).await?;
 
-			debug!("try_to_finalize ~ Stored VoteResult for block #{}:, Validator address: {:?}", vote_result.data.block_number, hex::encode(vote_result.validator_address));
-;
+			debug!("🤝 Consensus | Block #{} | Vote Result Stored | Validator: {}", vote_result.data.block_number, hex::encode(vote_result.validator_address));
+
 			// store block
 			let block_state = BlockState::new(&db_pool_conn).await?;
 			block_state.store_block(block_payload.block.clone()).await?;
@@ -367,14 +377,14 @@ impl<'a> PendingBlock {
 
 			Ok(events)
 		} else {
-			Err(anyhow!("Noone vote result is passed"))
+			Err(anyhow!("🤝 Consensus | Block #{} | Vote Result Failed | No Passing Votes Yet", block_payload.block.block_header.block_number))
 		}
 	}
 
 	fn broadcast_events(&self, events: Vec<EventData>) {
 		for event in events {
 			if let Err(err) = self.node_event_tx.send(event) {
-				warn!("Failed to publish ReceiveBlock event due to {:?}", err);
+				warn!("🤝 ⚠️ Consensus | Event Broadcast Failed | Error: {}", err);
 			}
 		}
 	}
@@ -517,7 +527,7 @@ impl<'a> PendingBlocks {
 		if let Some(pending_block) = self.blocks.get(&block_number) {
 			pending_block.try_to_vote_result(secret_key, verifying_key, block_proposer_address, validators, db_pool_conn, pool_address).await
 		} else {
-			Err(anyhow!("Can't find pending Block #{}", block_number))
+			Err(anyhow!("🤝 Consensus | Block #{} | Operation Failed | Pending Block Not Found", block_number))
 		}
 	}
 
@@ -534,7 +544,7 @@ impl<'a> PendingBlocks {
 			let elapsed = current_time.saturating_sub(block_time);
 			let retain = elapsed <= expiration_ms;
 			
-			debug!("PendingBlock #{}: timestamp: {}, elapsed: {}, retain: {}", block_number, block_time, elapsed, retain);
+			debug!("🤝 Consensus | Block #{} | Expiration Check | Timestamp: {} | Elapsed: {} | Retained: {}", block_number, block_time, elapsed, retain);
 			if !retain {
 				expired.push(block_number);
 			}
@@ -577,7 +587,7 @@ impl<'a> PendingBlocks {
 			format!("{:?}", block_numbers)
 		};
 
-		info!("There are {} unfinalized blocks: {}", block_numbers.len(), print_block_numbers);
+		info!("🤝 Consensus | Pending Blocks: {} | Range: {} | Status: Unfinalized", block_numbers.len(), print_block_numbers);
 
 		let mut finalized_blocks = Vec::new();
 		for block_number in block_numbers {
@@ -589,21 +599,21 @@ impl<'a> PendingBlocks {
 					continue;
 				},
 				_ => {
-					info!("Try to finalize Block #{}", block_number);
+					info!("🤝 Consensus | Block #{} | Starting Finalization", block_number);
 					if let Some(pending_block) = self.blocks.get_mut(&block_number) {
 						match pending_block.try_to_finalize(db_pool_conn, pool_address).await {
 							Ok(_e) => {
-								info!("Block #{} is finalized", block_number);
+								info!("🤝 ✅ Consensus | Block #{} | Finalization Complete", block_number);
 								finalized_blocks.push(block_number)
 							},
 							Err(e) => {
-								info!("Can't finalize Block #{}: {}", block_number, e);
+								warn!("🤝 ⚠️ Consensus | Block #{} | Finalization Failed | Reason: {}", block_number, e);
 								// Blocks are sorted, no sense to try to finalize the next one
 								break;
 							},
 						}
 					} else {
-						info!("Can't find pending Block #{}", block_number);
+						info!("🤝 ⚠️ Consensus | Block #{} | Missing Pending Block", block_number);
 						// Blocks are sorted, no sense to try to finalize the next one
 						break;
 					}
@@ -643,18 +653,18 @@ async fn query_missed_block<'a>(
 		.await?
 		.block_number
 		.checked_add(1)
-		.ok_or_else(|| anyhow!("Arithmetic Overflow | Reached block number limit"))?;
+		.ok_or_else(|| anyhow!("🤝 Consensus | Block Number Overflow | Maximum Block Height Reached"))?;
 
-	info!("Query for a missed block #{}", block_number);
+		info!("🤝 🔄 Consensus | Block #{} | Querying Missing Block", block_number);
 
 	// Get peer_id of the boot node(if present) else select one of the validators to get peer_id
 	let peer_id = if !config.boot_nodes.is_empty() {
 		let boot_node = config.boot_nodes.get(0)
-			.ok_or_else(|| anyhow!("No boot nodes found"))?;
+			.ok_or_else(|| anyhow!("🤝 Consensus | Network Configuration Error | No Boot Nodes Available"))?;
 		let peer_id_str = boot_node
 			.split("/p2p/")
 			.nth(1)
-			.ok_or_else(|| anyhow!("Boot node does not contain a valid peer ID"))?;
+			.ok_or_else(|| anyhow!("🤝 Consensus | Network Configuration Error | Invalid Boot Node Peer ID"))?;
 
 		PeerId::from_str(peer_id_str)
 			.map_err(|e| anyhow!("Unable to get peer ID: {:?}", e))?
@@ -681,24 +691,16 @@ async fn query_missed_block<'a>(
 						peer_id = Some(pid);
 						break; // Exit loop once a valid peer_id is found
 					} else {
-						warn!(
-								"Invalid peer ID for validator 0x{}: {}",
-								hex::encode(&validator.address),
-								info.peer_id
-							);
+						warn!("🤝 ⚠️ Consensus | Validator: {} | Invalid Peer ID: {}", hex::encode(&validator.address), info.peer_id);
 					}
 				}
 				Err(e) => {
-					warn!(
-							"Failed to load node info for 0x{} due to {}.",
-							hex::encode(&validator.address),
-							e
-						);
+					warn!("🤝 ⚠️ Consensus | Validator: {} | Node Info Load Failed | Error: {}", hex::encode(&validator.address), e);
 				}
 			}
 		}
 
-		peer_id.ok_or_else(|| anyhow!("No valid peer ID found for validators"))?
+		peer_id.ok_or_else(|| anyhow!("🤝 Consensus | Network Error | No Valid Peer IDs Found Among Validators"))?
 	};
 
 	let query_block_request = QueryBlockMessage {
@@ -710,7 +712,7 @@ async fn query_missed_block<'a>(
 		.send(BroadcastNetwork::BroadcastQueryBlockRequest(query_block_request, peer_id))
 		.await
 	{
-		warn!("Unable to write vote result to network_client_tx channel: {:?}", e)
+		warn!("🤝 ⚠️ Consensus | Network Error | Failed to Query Block | Error: {}", e);
 	}
 
 	Ok(())

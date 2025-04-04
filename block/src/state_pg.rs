@@ -257,7 +257,7 @@ impl<'a> BlockState for StatePg<'a> {
 		let block_num = convert_to_big_decimal_block_number(block.block_header.block_number);
 		let _num_transactions = u32::try_from(block.transactions.len()).unwrap_or(u32::MAX);
 		info!(
-			"ℹ️ STORING BLOCK #{}, CLUSTER ADDRESS 0x{}",
+			"🗳️  StatePg - Store Block - STORING BLOCK #{}, CLUSTER ADDRESS 0x{}",
 			block_num, hex::encode(&block.block_header.cluster_address)
 		);
 
@@ -278,15 +278,15 @@ impl<'a> BlockState for StatePg<'a> {
 				)
 				.await
 			{
-				eprintln!("Failed to store transaction: {:?}", e);
+				eprintln!("🗳️  StatePg - Store Block - Failed to store transaction: {:?}", e);
 				// Optionally, you can decide to do something else here, like collecting errors
 			}
 		}
 		match self.store_block_header(block.block_header.clone()).await {
 			Ok(_) => {
-				println!("block header interted successfully")
+				println!("🗳️  StatePg - Store Block - Block header stored successfully")
 			},
-			Err(e) => return Err(anyhow!("Failed to store_block_header: {:?}", e)), /* return Err(anyhow::anyhow!("Failed to get a database connection from the pool")), */
+			Err(e) => return Err(anyhow!("🗳️  StatePg - Store Block - Failed to store_block_header: {:?}", e)), /* return Err(anyhow::anyhow!("Failed to get a database connection from the pool")), */
 		};
 
 		let chain_state = self.load_chain_state(block.block_header.cluster_address).await?;
@@ -299,7 +299,7 @@ impl<'a> BlockState for StatePg<'a> {
 				)
 				.await
 			{
-				eprintln!("Failed to update block head: {:?}", e);
+				eprintln!("🗳️  StatePg - Store Block - Failed to update block head: {:?}", e);
 				// Handle the error, e.g., by returning it or taking some recovery action
 				return Err(e);
 			}
@@ -317,7 +317,7 @@ impl<'a> BlockState for StatePg<'a> {
 				{
 					Ok(_) => Ok(()),
 					Err(e) => Err(anyhow::anyhow!(
-						"Failed to store_block::block_meta_info: {} : {:?}",
+						"🗳️  StatePg - Store Block - Failed to store_block::block_meta_info: {} : {:?}",
 						e,
 						new_block_meta_info
 					)),
@@ -332,7 +332,7 @@ impl<'a> BlockState for StatePg<'a> {
 				{
 					Ok(_) => Ok(()),
 					Err(e) => Err(anyhow::anyhow!(
-						"Failed to store_block::block_meta_info: {} : {:?}",
+						"🗳️  StatePg - Store Block - Failed to store_block::block_meta_info: {} : {:?}",
 						e,
 						new_block_meta_info
 					)),
@@ -360,7 +360,7 @@ impl<'a> BlockState for StatePg<'a> {
 			let block_num = convert_to_big_decimal_block_number(block.block_header.block_number);
 			let _num_transactions = u32::try_from(block.transactions.len()).unwrap_or(u32::MAX);
 			info!(
-				"ℹ️ STORING BLOCK #{}, CLUSTER ADDRESS 0x{}",
+				"🗳️  StatePg - Store Block - Block #{}, Cluster Address 0x{}",
 				block_num, hex::encode(&block.block_header.cluster_address)
 			);
 
@@ -554,12 +554,12 @@ impl<'a> BlockState for StatePg<'a> {
 				Ok(TransactionMetadata {
 					transaction_hash: tx_hash,
 					is_successful: v.is_successful,
-					burnt_gas: v.burnt_gas.to_u64().ok_or(anyhow!("Can't conver BigDecimal to Gas: {:?}", v.burnt_gas))?,
-					fee: v.fee.to_u128().ok_or(anyhow!("Can't conver BigDecimal to Balance: {:?}", v.fee))?,
+					burnt_gas: v.burnt_gas.to_u64().ok_or(anyhow!("🗳️  StatePg - Load Transaction Metadata - Can't conver BigDecimal to Gas: {:?}", v.burnt_gas))?,
+					fee: v.fee.to_u128().ok_or(anyhow!("🗳️  StatePg - Load Transaction Metadata - Can't conver BigDecimal to Balance: {:?}", v.fee))?,
 				})
 			},
 			Err(e) => { 
-				Err(anyhow::anyhow!("transaction_metadata: diesel query failed, tx_hash: {}, error: {}", _transaction_hash, e))
+				Err(anyhow::anyhow!("🗳️  StatePg - Load Transaction Metadata - Diesel query failed, tx_hash: {}, error: {}", _transaction_hash, e))
 			},
 		}
 	}
@@ -631,10 +631,10 @@ impl<'a> BlockState for StatePg<'a> {
 			Ok(header) => {
 				match header.block_number.to_u128() {
 					Some(u128_val) => Ok(u128_val),
-					None => return Err(anyhow::anyhow!("Failed to convert BigDecimal to u128")),
+					None => return Err(anyhow::anyhow!("🗳️  StatePg - Get Block Number By Hash - Failed to convert BigDecimal to u128")),
 				}
 			},
-			Err(error) => Err(anyhow::anyhow!("Diesel query failed: {}", error))
+			Err(error) => Err(anyhow::anyhow!("🗳️  StatePg - Get Block Number By Hash - Diesel query failed: {}", error))
 		}
 	}
 
@@ -795,7 +795,7 @@ impl<'a> BlockState for StatePg<'a> {
 						cluster_add = array;
 					}
 
-					let blocktype = query_header.block_type.ok_or(anyhow!("Block type is None"))?.try_into()?;
+					let blocktype = query_header.block_type.ok_or(anyhow!("🗳️  StatePg - Load Block Header - Block type is None"))?.try_into()?;
 
 					let blk_timestamp =
 						query_header.timestamp.unwrap_or(NaiveDateTime::MAX).timestamp()
@@ -829,12 +829,12 @@ impl<'a> BlockState for StatePg<'a> {
 					return Ok(blockheader);
 				} else {
 					return Err(anyhow::anyhow!(
-						"No matching records found for block #{}",
+						"🗳️  StatePg - Load Block Header - No matching records found for block #{}",
 						blk_number
 					));
 				};
 			},
-			Err(e) => return Err(anyhow::anyhow!("Diesel query failed: {}", e)),
+			Err(e) => return Err(anyhow::anyhow!("🗳️  StatePg - Load Block Header - Diesel query failed: {}", e)),
 		}
 	}
 
@@ -861,7 +861,7 @@ impl<'a> BlockState for StatePg<'a> {
 					deserialize_transaction(&query_results.transaction.unwrap())?;
 				Ok(Some(sys_transaction))
 			},
-			Err(e) => return Err(anyhow::anyhow!("Diesel query failed: {}", e)),
+			Err(e) => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transaction - Diesel query failed: {}", e)),
 		}
 	}
 
@@ -892,7 +892,7 @@ impl<'a> BlockState for StatePg<'a> {
 
 				let block_number_u128: u128 = match query_results.block_number.to_u128() {
 					Some(u128_val) => u128_val,
-					None => return Err(anyhow::anyhow!("Failed to convert BigDecimal to u128")),
+					None => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transaction Receipt - Failed to convert BigDecimal to u128")),
 				};
 
 				// Check if the block is already executed
@@ -905,7 +905,7 @@ impl<'a> BlockState for StatePg<'a> {
 
 					let block_hash_str = match query_results.block_hash {
 						Some(hash) => hash,
-						None => return Err(anyhow::anyhow!("Failed to parse block hash")),
+						None => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transaction Receipt - Failed to parse block hash")),
 					};
 
 					let bh = hex::decode(block_hash_str.clone())?;
@@ -926,7 +926,7 @@ impl<'a> BlockState for StatePg<'a> {
 					let from = hex::decode(
 						match query_results.from_address {
 							Some(addr) => addr,
-							None => return Err(anyhow::anyhow!("Failed to decode from address")),
+							None => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transaction Receipt - Failed to decode from address")),
 						}
 					)?;
 
@@ -961,7 +961,7 @@ impl<'a> BlockState for StatePg<'a> {
 							if let Ok(query_results) = block_header_res {
 								let num_tx = match query_results.num_transactions {
 									Some(num) => num,
-									None => return Err(anyhow::anyhow!("Failed to parse num_transactions in given block")),
+									None => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transaction Receipt - Failed to parse num_transactions in given block")),
 								};
 								if num_tx > 0 {
 									transaction_status = true
@@ -983,10 +983,10 @@ impl<'a> BlockState for StatePg<'a> {
 
 					Ok(Some(trx_recepit))
 				} else {
-					return Err(anyhow::anyhow!("Block is not executed yet"));
+					return Err(anyhow::anyhow!("🗳️  StatePg - Load Transaction Receipt - Block is not executed yet"));
 				}
 			},
-			Err(e) => return Err(anyhow::anyhow!("Diesel query failed: {}", e)),
+			Err(e) => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transaction Receipt - Diesel query failed: {}", e)),
 		}
 	}
 
@@ -1040,16 +1040,16 @@ impl<'a> BlockState for StatePg<'a> {
 
 					let block_number_u128: u128 = match query_results.block_number.to_u128() {
 						Some(u128_val) => u128_val,
-						None => return Err(anyhow::anyhow!("Failed to convert BigDecimal to u128")),
+						None => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transaction Receipt - Failed to convert BigDecimal to u128")),
 					};
 
 					let fee_used_u128: u128 = match query_results.fee_used {
 						Some(decimal) => match decimal.to_u128() {
 							Some(u128_val) => u128_val,
 							None =>
-								return Err(anyhow::anyhow!("Failed to convert BigDecimal to u128")),
+								return Err(anyhow::anyhow!("🗳️  StatePg - Load Transaction Receipt - Failed to convert BigDecimal to u128")),
 						},
-						None => return Err(anyhow::anyhow!("Block number is None")),
+						None => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transaction Receipt - Block number is None")),
 					};
 
 					let sys_transaction: Transaction =
@@ -1070,7 +1070,7 @@ impl<'a> BlockState for StatePg<'a> {
 				}
 				Ok(transactions)
 			},
-			Err(e) => return Err(anyhow::anyhow!("Diesel query failed: {}", e)),
+			Err(e) => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transaction Receipt - Diesel query failed: {}", e)),
 		}
 	}
 
@@ -1102,11 +1102,11 @@ impl<'a> BlockState for StatePg<'a> {
 					let block_number_u64 = query_header
 						.block_number
 						.to_u64()
-						.expect("Failed to convert block_number to u64");
+						.expect("🗳️  StatePg - Load Latest Block Headers - Failed to convert block_number to u64");
 					let epoch_number_u64 = query_header
 					.epoch
 					.to_u64()
-					.expect("Failed to convert epoch to u64");
+					.expect("🗳️  StatePg - Load Latest Block Headers - Failed to convert epoch to u64");
 					let header = l1x_rpc::rpc_model::BlockHeaderV3 {
 						block_number: block_number_u64,
 						block_hash: query_header
@@ -1130,7 +1130,7 @@ impl<'a> BlockState for StatePg<'a> {
 				}
 				return Ok(blockheader);
 			},
-			Err(e) => return Err(anyhow::anyhow!("Diesel query failed: {}", e)),
+			Err(e) => return Err(anyhow::anyhow!("🗳️  StatePg - Load Latest Block Headers - Diesel query failed: {}", e)),
 		}
 	}
 
@@ -1172,12 +1172,12 @@ impl<'a> BlockState for StatePg<'a> {
 
 					let block_number_i64: i64 = match query_trx.block_number.to_i64() {
 						Some(u128_val) => u128_val,
-						None => return Err(anyhow::anyhow!("Failed to convert BigDecimal to u128")),
+						None => return Err(anyhow::anyhow!("🗳️  StatePg - Load Latest Transactions - Failed to convert BigDecimal to u128")),
 					};
 
 					let _fee_used: String = match query_trx.fee_used {
 						Some(decimal) => decimal.to_string(),
-						None => return Err(anyhow::anyhow!("Block number is None")),
+						None => return Err(anyhow::anyhow!("🗳️  StatePg - Load Latest Transactions - Block number is None")),
 					};
 
 					let sys_transaction: Transaction =
@@ -1198,7 +1198,7 @@ impl<'a> BlockState for StatePg<'a> {
 				}
 				Ok(transactions)
 			},
-			Err(e) => return Err(anyhow::anyhow!("Diesel query failed: {}", e)),
+			Err(e) => return Err(anyhow::anyhow!("🗳️  StatePg - Load Latest Transactions - Diesel query failed: {}", e)),
 		}
 	}
 
@@ -1223,11 +1223,11 @@ impl<'a> BlockState for StatePg<'a> {
 				for query_trx in query_results {
 					let sys_transaction: Transaction = match query_trx.transaction {
 						Some(ref vec) => deserialize_transaction(vec)?,
-						None => return Err(anyhow::anyhow!("Transaction data is None")),
+						None => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transactions - Transaction data is None")),
 					};
 					transactions.push(sys_transaction);
 				},
-			Err(e) => return Err(anyhow::anyhow!("Diesel query failed: {}", e)),
+			Err(e) => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transactions - Diesel query failed: {}", e)),
 		};
 		Ok(transactions)
 	}
@@ -1284,21 +1284,21 @@ impl<'a> BlockState for StatePg<'a> {
 
 					let block_number_u128: u128 = match query_trx.block_number.to_u128() {
 						Some(u128_val) => u128_val,
-						None => return Err(anyhow::anyhow!("Failed to convert BigDecimal to u128")),
+						None => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transactions - Failed to convert BigDecimal to u128")),
 					};
 
 					let fee_used_u128: u128 = match query_trx.fee_used {
 						Some(decimal) => match decimal.to_u128() {
 							Some(u128_val) => u128_val,
 							None =>
-								return Err(anyhow::anyhow!("Failed to convert BigDecimal to u128")),
+								return Err(anyhow::anyhow!("🗳️  StatePg - Load Transactions - Failed to convert BigDecimal to u128")),
 						},
-						None => return Err(anyhow::anyhow!("Block number is None")),
+						None => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transactions - Block number is None")),
 					};
 
 					let sys_transaction: Transaction = match query_trx.transaction {
 						Some(ref vec) => deserialize_transaction(vec)?,
-						None => return Err(anyhow::anyhow!("Transaction data is None")),
+						None => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transactions - Transaction data is None")),
 					};
 					let response = TransactionReceiptResponse {
 						transaction: sys_transaction,
@@ -1315,7 +1315,7 @@ impl<'a> BlockState for StatePg<'a> {
 				}
 				Ok(transactions)
 			},
-			Err(e) => return Err(anyhow::anyhow!("Diesel query failed: {}", e)),
+			Err(e) => return Err(anyhow::anyhow!("🗳️  StatePg - Load Transactions - Diesel query failed: {}", e)),
 		}
 	}
 

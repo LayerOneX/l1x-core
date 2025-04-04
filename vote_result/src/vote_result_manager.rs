@@ -68,10 +68,10 @@ impl<'a> VoteResultManager {
 			pool_account
 		};
 		let pool_balance = pool_account.balance;
-		debug!("vote_result ~ Pool balance: {:?}", pool_balance);
+		debug!("🗳️  Vote Result Manager - Pool balance: {:?}", pool_balance);
 
 		// Validator Address hex encode
-		debug!("vote_result ~ Validator address: {:?}", hex::encode(validator_address));
+		debug!("🗳️  Vote Result Manager - Validator address: {:?}", hex::encode(validator_address));
 
 		let mut voting_string = format!("Vote info for block #{}\n", block_number);
 		voting_string.push_str(&format!("\tPool balance: {}\n", pool_balance));
@@ -86,9 +86,9 @@ impl<'a> VoteResultManager {
 			// Calculate the minimum number of votes required (70% of validators)
 			// let min_votes = (validators.len() as f64 * 0.7) as usize;
 			let min_votes = calculate_min_votes(validators.len(), VOTE_THRESHOLD);
-			debug!("vote_result ~ Min votes: {:?}", min_votes);
-			debug!("vote_result ~ Votes length: {:?}", votes.len());
-			debug!("vote_result ~ VOTE_THRESHOLD: {:?}", VOTE_THRESHOLD);
+			debug!("🗳️  Vote Result Manager - Min votes: {:?}", min_votes);
+			debug!("🗳️  Vote Result Manager - Votes length: {:?}", votes.len());
+			debug!("🗳️  Vote Result Manager - VOTE_THRESHOLD: {:?}", VOTE_THRESHOLD);
 
 
 			// Check if the number of votes is less than the required minimum
@@ -98,22 +98,22 @@ impl<'a> VoteResultManager {
 			}
 			let total_favoured_stake = futures::future::join_all(votes.iter().map(
 				|(validator_address, &vote)| async move {
-					debug!("vote_result ~ total_favoured_stake ~ Validator address: {:?}, Vote: {:?}", hex::encode(validator_address), vote);
+					// debug!("🗳️  Vote Result Manager - Total favoured stake ~ Validator address: {:?}, Vote: {:?}", hex::encode(validator_address), vote);
 					if vote {
 						let staking_state = StakingState::new(db_pool_conn)
 							.await
-							.expect("error getting staking state conn");
+							.expect("🗳️ ❌ Vote Result Manager - error getting staking state conn");
 						let stake_result = staking_state
 							.get_staking_account(validator_address, pool_address)
 							.await;
 
 						match stake_result {
 							Ok(stake) => {
-								debug!("vote_result ~ total_favoured_stake ~ Validator address: {:?}, Stake result: {}", hex::encode(validator_address), stake);
+								debug!("🗳️  Vote Result Manager - Total favoured stake ~ Validator address: {:?}, Stake result: {}", hex::encode(validator_address), stake);
 								stake.balance as f64
 							},
 							Err(err) => {
-								warn!("vote_result ~ total_favoured_stake ~ Error fetching stake: {:?}, for validator address: {:?}, pool address: {:?}", err, hex::encode(validator_address), hex::encode(pool_address));
+								warn!("🗳️ ❌ Vote Result Manager - Error fetching stake: {:?}, for validator address: {:?}, pool address: {:?}", err, hex::encode(validator_address), hex::encode(pool_address));
 								0.0
 							},
 						}
@@ -130,15 +130,15 @@ impl<'a> VoteResultManager {
 				|(validator_address, _)| async move {
 					let staking_state = StakingState::new(db_pool_conn)
 						.await
-						.expect("error getting staking state conn");
-					debug!("vote_result ~ total_voted_stake ~ Validator address: {:?}", hex::encode(validator_address));
+						.expect("🗳️ ❌ Vote Result Manager - error getting staking state conn");
+					debug!("🗳️  Vote Result Manager - Total voted stake ~ Validator address: {:?}", hex::encode(validator_address));
 					match staking_state
 						.get_staking_account(validator_address, pool_address)
 						.await
 					{
 						Ok(stake) => stake.balance as f64,
 						Err(err) => {
-							warn!("vote_result ~ total_voted_stake ~ Error fetching stake: {:?}, for validator address: {:?}, pool address: {:?}", err, hex::encode(validator_address), hex::encode(pool_address));
+							warn!("🗳️ ❌ Vote Result Manager - Error fetching stake: {:?}, for validator address: {:?}, pool address: {:?}", err, hex::encode(validator_address), hex::encode(pool_address));
 							0.0
 						},
 					}
@@ -148,8 +148,8 @@ impl<'a> VoteResultManager {
 			.into_iter()
 			.sum::<f64>();
 
-			debug!("vote_result ~ total_voted_stake: {:?}", total_voted_stake);
-			debug!("vote_result ~ total_favoured_stake: {:?}", total_favoured_stake);
+			debug!("🗳️  Vote Result Manager - Total voted stake: {:?}", total_voted_stake);
+			debug!("🗳️  Vote Result Manager - Total favoured stake: {:?}", total_favoured_stake);
 			let stake_ratio = if total_voted_stake > 0.0 {
 				total_favoured_stake / total_voted_stake
 			} else {
@@ -165,11 +165,11 @@ impl<'a> VoteResultManager {
 			// If 50% of the vote is in favour of the block, the block is accepted
 			// let vote_passed = (total_favoured_stake / pool_balance as f64) > 0.5;
 			let vote_passed = stake_ratio > (STAKE_PASS_NUMERATOR as f64 / STAKE_PASS_DENOMINATOR as f64) - f64::EPSILON;
-			debug!("vote_result ~ Vote passed: {:?} for block #{}, ratio: {}/{}", vote_passed, block_number, STAKE_PASS_NUMERATOR, STAKE_PASS_DENOMINATOR);
+			info!("🗳️  Vote Result Manager - Vote passed: {:?} for block #{}, ratio: {}/{}", vote_passed, block_number, STAKE_PASS_NUMERATOR, STAKE_PASS_DENOMINATOR);
 			// info!("VOTE PASSED for block #{}? {:?}", block_number, vote_passed);
-			voting_string.push_str(&format!("\t❔VOTE PASSED? {}\n", vote_passed));
+			// voting_string.push_str(&format!("\t❔VOTE PASSED? {}\n", vote_passed));
 
-			info!("vote_result ~ voting_string: {}", voting_string);
+			// info!("🗳️  Vote Result Manager - voting_string: {}", voting_string);
 
 			let vote_result_sign_payload = VoteResultSignPayload::new(
 				block_number,
@@ -180,7 +180,7 @@ impl<'a> VoteResultManager {
 			);
 
 			let json_str = serde_json::to_string(&vote_result_sign_payload).map_err(|e| {
-				anyhow!(format!("Failed to serialize the vote signature payload: {:?}", e))
+				anyhow!(format!("🗳️ ❌ Vote Result Manager - Failed to serialize the vote signature payload: {:?}", e))
 			})?;
 			let message = Message::from_hashed_data::<sha256::Hash>(json_str.as_bytes());
 			let sig = secret_key.sign_ecdsa(message);
@@ -196,10 +196,10 @@ impl<'a> VoteResultManager {
 				all_votes,
 			);
 
-			debug!("vote_result ~ Vote result: {:?}", vote_result);
+			debug!("🗳️  Vote Result Manager - Vote result: {:?}", vote_result);
 			// Iterate Validator Address to hex::encode
 			for v in vote_result.clone().data.votes {
-				debug!("vote_result ~ Vote result ~ Validator address: {:?}", hex::encode(v.validator_address));
+				debug!("🗳️  Vote Result Manager - Vote result ~ Validator address: {:?}", hex::encode(v.validator_address));
 			}
 
 			// {
@@ -212,12 +212,12 @@ impl<'a> VoteResultManager {
 					.send(BroadcastNetwork::BroadcastVoteResult(vote_result.clone()))
 					.await
 				{
-					warn!("Unable to write vote result too network_client_tx channel: {:?}", e)
+					warn!("🗳️ ❌ Vote Result Manager - Unable to write vote result too network_client_tx channel: {:?}", e)
 				}
 			}
 
 			debug!(
-				"Participation: {}/{} ({}%) required, {}/{} ({}%) approved",
+				"🗳️  Vote Result Manager - Participation: {}/{} ({}%) required, {}/{} ({}%) approved",
 				votes.len(),
 				validators.len(),
 				(votes.len() as f64 / validators.len() as f64) * 100.0,
@@ -247,13 +247,13 @@ impl<'a> VoteResultManager {
 		let mut validator_print = String::new();
 		for v in validators.clone() { 
 			let s = format!("\t{}\n", hex::encode(v.address));
-			debug!("try_to_generate_vote_result ~ Validator Address: {:?}", s);
+			debug!("🗳️  Vote Result Manager - Generate Vote Result - Validator Address: {:?}", s);
 			validator_print.push_str(&s);
 		}
 		// println!("SELECTED {} VALIDATORS for block {}: \n{}", selected_validators.len(),
 		// block_number, validator_print);
-		info!("VALIDATORS LOADED for block #{}: \n{}", block_number, validator_print);
-		debug!("try_to_generate_vote_result ~ pool_address: {:?}", hex::encode(pool_address));
+		info!("🗳️  Vote Result Manager - Generate Vote Result - Validators for block #{}: \n{}", block_number, validator_print);
+		debug!("🗳️  Vote Result Manager - Generate Vote Result - pool_address: {:?}", hex::encode(pool_address));
 		
 		let unique_votes = Self::get_unique_votes(&all_votes);
 		if !unique_votes.is_empty() {
@@ -262,25 +262,25 @@ impl<'a> VoteResultManager {
 			let min_votes = calculate_min_votes(validators.len(), VOTE_THRESHOLD);
 			// Check if the number of votes is less than the required minimum
 			// We assume 30% of validators will be unresponsive or not available
-			info!("try_to_generate_vote_result ~ Min vote required #{}: total votes received #{}:", min_votes, unique_votes.len());
+			info!("🗳️  Vote Result Manager - Generate Vote Result - Min vote required #{}: total votes received #{}:", min_votes, unique_votes.len());
 			if unique_votes.len() < min_votes {
 				return Ok(None)
 			}
 
 			let vote_passed = Self::is_passed(&unique_votes, validators, min_votes).await?;
-			debug!("try_to_generate_vote_result ~ Vote passed: {:?} for block #{}", vote_passed, block_number);
+			info!("🗳️  Vote Result Manager - Generate Vote Result - Vote passed: {:?} for block #{}", vote_passed, block_number);
 			// Waiting for 60% up votes for this block
 			if !vote_passed {
 				return Ok(None)
 			}
 
-			let mut voting_string = format!("Vote info for block #{}\n", block_number);
+			// let mut voting_string = format!("Vote info for block #{}\n", block_number);
 			// voting_string.push_str(&format!("\tTotal favoured stake: {}\n", total_favoured_stake));
 
 			// info!("VOTE PASSED for block #{}? {:?}", block_number, vote_passed);
-			voting_string.push_str(&format!("\t❔VOTE PASSED? {}\n", vote_passed));
+			// voting_string.push_str(&format!("\t❔VOTE PASSED? {}\n", vote_passed));
 
-			info!("{}", voting_string);
+			// info!("🗳️  Vote Result Manager - {}", voting_string);
 
 			let vote_result_sign_payload = VoteResultSignPayload::new(
 				block_number,
@@ -291,7 +291,7 @@ impl<'a> VoteResultManager {
 			);
 
 			let json_str = serde_json::to_string(&vote_result_sign_payload).map_err(|e| {
-				anyhow!(format!("Failed to serialize the vote signature payload: {:?}", e))
+				anyhow!(format!("🗳️ ❌ Vote Result Manager - Failed to serialize the vote signature payload: {:?}", e))
 			})?;
 			let message = Message::from_hashed_data::<sha256::Hash>(json_str.as_bytes());
 			let sig = secret_key.sign_ecdsa(message);
@@ -308,15 +308,15 @@ impl<'a> VoteResultManager {
 			);
 
 
-			debug!("try_to_generate_vote_result ~ Vote result: {:?}", vote_result);
+			debug!("🗳️  Vote Result Manager - Generate Vote Result - Vote result: {:?}", vote_result);
 			// Iterate Validator Address to hex::encode
 			for v in vote_result.clone().data.votes {
-				debug!("try_to_generate_vote_result ~ Vote result ~ Validator address: {:?}", hex::encode(v.validator_address));
+				debug!("🗳️  Vote Result Manager - Generate Vote Result - Vote result ~ Validator address: {:?}", hex::encode(v.validator_address));
 			}
 
 			return Ok(Some(vote_result))
 		} else {
-			return Err(anyhow!("No votes found for the block_hash"))
+			return Err(anyhow!("🗳️ ❌ Vote Result Manager - No votes found for the block_hash"))
 		}
 	}
 
@@ -368,7 +368,7 @@ impl<'a> VoteResultManager {
 	
 		for vote in all_votes.iter() {
 		  if !validator_addresses.contains(&vote.validator_address) {
-			debug!("Skipping vote from non-validator: {}", hex::encode(&vote.validator_address));
+			debug!("🗳️  Vote Result Manager - Skipping vote from non-validator: {}", hex::encode(&vote.validator_address));
 			continue;
 		  }
 	
@@ -383,12 +383,12 @@ impl<'a> VoteResultManager {
 				stake_info.staked_balance
 			  },
 			  Some(stake_info) => {
-				debug!("Validator {} has insufficient stake: {}", 
+				debug!("🗳️  Vote Result Manager - Validator {} has insufficient stake: {}", 
 				  hex::encode(&vote.validator_address), stake_info.staked_balance);
 				continue;
 			  },
 			  None => {
-				debug!("No stake info found for validator {}", 
+				debug!("🗳️  Vote Result Manager - No stake info found for validator {}", 
 				  hex::encode(&vote.validator_address));
 				continue;
 			  }
@@ -396,34 +396,34 @@ impl<'a> VoteResultManager {
 		  };
 	
 		  total_stake = total_stake.checked_add(stake)
-			.ok_or_else(|| anyhow!("Stake overflow in total calculation"))?;
+			.ok_or_else(|| anyhow!("🗳️ ❌ Vote Result Manager - Stake overflow in total calculation"))?;
 	
 		  if vote.data.vote {
 			yes_stake = yes_stake.checked_add(stake)
-			  .ok_or_else(|| anyhow!("Stake overflow in yes calculation"))?;
+			  .ok_or_else(|| anyhow!("🗳️ ❌ Vote Result Manager - Stake overflow in yes calculation"))?;
 		  } else {
 			no_stake = no_stake.checked_add(stake)
-			  .ok_or_else(|| anyhow!("Stake overflow in no calculation"))?;
+			  .ok_or_else(|| anyhow!("🗳️ ❌ Vote Result Manager - Stake overflow in no calculation"))?;
 		  }
 		}
 	
 		// Check minimum participation by both count and stake
 		if valid_vote_count < min_participation_count {
-		  debug!("Insufficient vote count: {} < {}", valid_vote_count, min_participation_count);
+		  debug!("🗳️  Vote Result Manager - Insufficient vote count: {} < {}", valid_vote_count, min_participation_count);
 		  return Ok(false);
 		}
 	
 		let voted_stake = yes_stake.checked_add(no_stake)
-		  .ok_or_else(|| anyhow!("Overflow adding yes and no stakes"))?;
+		  .ok_or_else(|| anyhow!("🗳️ ❌ Vote Result Manager - Overflow adding yes and no stakes"))?;
 	
 		// Calculate required yes stake (60% of voted stake)
 		let required_yes_stake = voted_stake
 		  .checked_mul(STAKE_PASS_NUMERATOR as u128)
 		  .and_then(|n| n.checked_div(STAKE_PASS_DENOMINATOR as u128))
-		  .ok_or_else(|| anyhow!("Arithmetic overflow in threshold calculation"))?;
+		  .ok_or_else(|| anyhow!("🗳️ ❌ Vote Result Manager - Arithmetic overflow in threshold calculation"))?;
 	
 		debug!(
-		  "Vote stake distribution for block #{}: \n\
+		  "🗳️  Vote Result Manager - Vote stake distribution for block #{}: \n\
 		   Total valid votes: {}\n\
 		   Yes stake: {}\n\
 		   No stake: {}\n\
@@ -444,8 +444,8 @@ impl<'a> VoteResultManager {
 		let unique_votes = Self::get_unique_votes(&vote_result.data.votes);
 		let min_passed_votes = (validators.len() as f64 * VOTE_THRESHOLD) as usize;
 
-		debug!("is_vote_result_passed ~ unique_votes: {:?}", unique_votes);
-		debug!("is_vote_result_passed ~ min_passed_votes: {:?}", min_passed_votes);
+		debug!("🗳️  Vote Result Manager - is_vote_result_passed ~ unique_votes: {:?}", unique_votes);
+		debug!("🗳️  Vote Result Manager - is_vote_result_passed ~ min_passed_votes: {:?}", min_passed_votes);
 
 		Self::is_passed(&unique_votes, validators, min_passed_votes).await
 	}
@@ -473,7 +473,7 @@ impl<'a> VoteResultManager {
         // Fallback after 30 seconds
         let current_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|_| anyhow!("System time before UNIX EPOCH!"))?
+            .map_err(|_| anyhow!("🗳️ ❌ Vote Result Manager - System time before UNIX EPOCH!"))?
             .as_millis();
 
         if current_time.saturating_sub(block_timestamp) > BLOCK_EXPIRATION_TIME {

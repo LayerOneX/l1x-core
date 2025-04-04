@@ -110,6 +110,7 @@ impl StartCmd {
 			hex::decode(parsed_config.validator_pool_address).expect("unable to decode cluster address").try_into().expect("Wrong length of Vec"),
 			&self.node_type,
             parsed_config.initial_epoch,
+            Some(parsed_config.eth_chain_id),
 		).await;
         // Create a mutex wrapped in an Arc to share across tasks
         let sync_node_guard = Arc::new(RwLock::new(()));
@@ -124,10 +125,10 @@ impl StartCmd {
         let (mempool_grpc_tx, mempool_grpc_rx) = mpsc::channel(1000);
         let (mempool_json_tx, mempool_json_rx) = mpsc::channel(1000);
         if self.node_type == NodeType::Full {
-            info!("Starting full node");
+            info!("🚀  Server - Starting full node");
             task::spawn(Self::mempool_response(mempool_res_rx, mempool_grpc_tx, mempool_json_tx));
         } else {
-            info!("Starting archive node");
+            info!("📦  Server - Starting archive node");
             if !boot_nodes.is_empty() {
                 // creating snapshot periodically
                 task::spawn(Self::sync_with_boot_node(parsed_config.sync_node_time_interval,
@@ -146,14 +147,14 @@ impl StartCmd {
                         task::spawn(upload_db_dump_to_s3(parsed_config.snapshot_time_interval, cluster_address, database_url, parsed_config.node_private_key, file_mutex));
                     }
                 } else {
-                    panic!("Invalid db config.(Required postgres config)");
+                    panic!("🔧 🚨  Server - Invalid db config.(Required postgres config)");
                 }
 
             } else {
-                panic!("No boot node provided");
+                panic!("🔧 🚨  Server - No boot node provided");
             }
         }
-        info!("Starting rpc servers");
+        info!("🔍  Server - Starting rpc servers");
         let grpc_task = task::spawn(grpc_server(
             parsed_config.grpc,
             parsed_config.grpc_port.clone(),
@@ -164,8 +165,8 @@ impl StartCmd {
 
         // exit when either task finishes
         tokio::select! {
-			res = grpc_task => info!("GRPC exited: {:?}", res),
-			res = json_rpc_task => info!("JSON exited: {:?}", res),
+			res = grpc_task => info!("🔍  Server - GRPC exited: {:?}", res),
+			res = json_rpc_task => info!("🔍  Server - JSON exited: {:?}", res),
 		}
     }
 
@@ -200,7 +201,7 @@ impl StartCmd {
         loop {
             // Wait until the next interval
             interval.tick().await;
-            info!("Starting node syncing...");
+            info!("🔍  Server - Starting node syncing...");
             let boot_nodes: &[&str] = &boot_nodes.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
             let sync_start_time = Instant::now();
             // Lock the mutex before writing to the file
@@ -208,14 +209,14 @@ impl StartCmd {
             // Sync historical blocks from existing archive/full node
             match node_crate::sync::sync_node(cluster_address, boot_nodes, event_tx.clone(), batch_size).await {
                 Ok(_) => {
-                    info!("✅ Syncing node successful ✅");
+                    info!("✅  Server - Syncing node successful ✅");
                     info!(
-					"⌛️ Syncing node took: {:?} seconds",
+					"⌛️  Server - Syncing node took: {:?} seconds",
 					sync_start_time.elapsed().as_secs()
 				);
                 }
                 Err(e) => {
-                    error!("Unable to sync node: {:?}", e);
+                    error!("🔧 🚨  Server - Unable to sync node: {:?}", e);
                 }
             }
             drop(guard);
@@ -240,19 +241,19 @@ fn resolve_boot_nodes(multiaddrs: &Vec<String>) -> Vec<String> {
                     let multiaddr = format!("/ip4/{}/tcp/{}/p2p/{}", ip_addr.to_string(), port, peer_id);
                     result.push(multiaddr);
                 } else {
-                    log::warn!("Can't resolve {} hostname", hostname.as_str());
+                    log::warn!("🔍 🚨 Server - Can't resolve {} hostname", hostname.as_str());
                 }
             } else {
                 result.push(addr.clone())
             }
         } else {
-            log::warn!("Inocorred boot node url format: {}", addr)
+            log::warn!("🔍 🚨  Server - Inocorred boot node url format: {}", addr)
         }
     }
 
-    log::info!("Boot nodes:");
-    result.iter().for_each(|a| {
-        log::info!("* {a}")
+    log::info!("🚀 Server | Boot Nodes Configuration ({} nodes)", result.len());
+    result.iter().enumerate().for_each(|(i, addr)| {
+        log::info!("🚀 Server | → Node #{} | {}", i + 1, addr);
     });
 
     result

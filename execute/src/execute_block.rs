@@ -22,7 +22,7 @@ macro_rules! continue_on_error {
 		match $expr {
 			Ok(ret) => ret,
 			Err(e) => {
-				error!("{}", e);
+				error!("⚡ 🚨  Execute Block - {}", e);
 				continue;
 			}
 		}
@@ -39,7 +39,7 @@ impl<'a> ExecuteBlock {
 		let block_number = block.block_header.block_number;
 		let cluster_address = block.block_header.cluster_address.clone();
 
-		info!("Execute block #{}", block_number);
+		info!("⚡  Execute Block - Execute block #{}", block_number);
 
 		let (db_request_tx, _cancel_on_drop) = state::updated_state_db::run_db_handler().await?;
 		let (block_updated_state, events) = tokio::task::block_in_place(move || -> Result<_, Error> {
@@ -53,7 +53,7 @@ impl<'a> ExecuteBlock {
 				let account_address = continue_on_error!(Account::address(&transaction.verifying_key));
 				let transaction_hash = continue_on_error!(transaction.transaction_hash());
 
-				info!("Execute transaction hash: {}", hex::encode(&transaction_hash));
+				info!("⚡  Execute Block - Execute transaction hash: {}", hex::encode(&transaction_hash));
 				
 				let mut tx_updated_state = block_updated_state.clone();
 	
@@ -62,7 +62,7 @@ impl<'a> ExecuteBlock {
 	
 				// locking fee
 				let fee_recipeint = compile_time_config::config::FEE_RECIPIENT_MASTER_ADDRESS;
-				info!("Locking fee limit: {}", transaction.fee_limit);
+				info!("⚡  Execute Block - Locking fee limit: {}", transaction.fee_limit);
 				continue_on_error!(ExecuteToken::just_transfer_tokens(&account_address,
 												   &fee_recipeint,
 												   transaction.fee_limit,
@@ -83,7 +83,7 @@ impl<'a> ExecuteBlock {
 					false,
 				) {
 					Ok(tx_result) => {
-						info!("Transaction passed, tx hash: {}, block: #{}", hex::encode(&transaction_hash), block_number);
+						info!("⚡  Execute Block - Transaction passed, tx hash: {}, block: #{}", hex::encode(&transaction_hash), block_number);
 						
 						if let Some(event) = tx_result.event {
 							events.push(event);
@@ -95,7 +95,7 @@ impl<'a> ExecuteBlock {
 						// refund unused fee
 						let unused_fee = continue_on_error!(transaction.fee_limit.checked_sub(tx_result.fee)
 							.ok_or(anyhow!("Error calculating unused fee")));
-						info!("Refunding unused fee: {}", unused_fee);
+						info!("⚡  Execute Block - Refunding unused fee: {}", unused_fee);
 						continue_on_error!(ExecuteToken::just_transfer_tokens(
 							&fee_recipeint,
 							&account_address,
@@ -118,13 +118,13 @@ impl<'a> ExecuteBlock {
 						// discard tx_updated_state
 						drop(tx_updated_state);
 
-						info!("Transaction failed, tx hash: {}, block: #{}, error: {:?}",
+						info!("⚡  Execute Block - Transaction failed, tx hash: {}, block: #{}, error: {:?}",
 							hex::encode(&transaction_hash), block_number, tx_result.error);
 	
 						// refund unused fee
 						let unused_fee = continue_on_error!(transaction.fee_limit.checked_sub(tx_result.fee)
 							.ok_or(anyhow!("Error calculating unused fee")));
-						info!("Refunding unused fee: {}", unused_fee);
+						info!("⚡  Execute Block - Refunding unused fee: {}", unused_fee);
 						continue_on_error!(ExecuteToken::just_transfer_tokens(
 							&fee_recipeint,
 							&account_address,
@@ -149,12 +149,12 @@ impl<'a> ExecuteBlock {
 		if let Err(e) = apply_system_contracts_changes(&block_updated_state, &block.block_header).await {
 			// Only log the error. If this function fails, it means outdated "runtime_config" will be used.
 			// If we return an error here then the block will be reverted and the blockchain will get stuck. That shouldn't happen. 
-			error!("Couldn't apply system contracts changes, block #{block_number}, error: {e}")
+			error!("⚡ 🚨  Execute Block - Couldn't apply system contracts changes, block #{block_number}, error: {e}")
 		}
 
 		if let Err(e) = block_updated_state.commit(db_pool_conn).await {
-			error!("Could not commit new Block state, error: {}", e);
-			return Err(anyhow!("Could not commit Block state, error: {}", e));
+			error!("⚡ 🚨  Execute Block - Could not commit new Block state, error: {}", e);
+			return Err(anyhow!("⚡ 🚨  Execute Block - Could not commit Block state, error: {}", e));
 		}
 		
 		let block_state = BlockState::new(db_pool_conn).await?;
@@ -222,7 +222,7 @@ impl<'a> ExecuteBlock {
 						// discard tx_updated_state
 						drop(tx_updated_state);
 
-						info!("Transaction failed, tx hash: {}, block: #{}, error: {:?}",
+						warn!("⚡ 🚨  Execute Block - Transaction failed, tx hash: {}, block: #{}, error: {:?}",
 							hex::encode(&transaction_hash), block_number, tx_result.error);
 	
 						let metadata = TransactionMetadata{
@@ -242,7 +242,7 @@ impl<'a> ExecuteBlock {
 		apply_system_contracts_changes(&block_updated_state, &block.block_header).await?;
 
 		if let Err(e) = block_updated_state.commit(db_pool_conn).await {
-			error!("Could not commit new Block state, error: {}", e);
+			warn!("⚡ 🚨  Execute Block - Could not commit new Block state, error: {}", e);
 			return Err(anyhow!("Could not commit Block state, error: {}", e));
 		}
 		
@@ -260,7 +260,7 @@ impl<'a> ExecuteBlock {
 		let cluster_address = block.block_header.cluster_address.clone();
 		let block_state = BlockState::new(&db_pool_conn).await?;
 		if block_state.is_block_executed(block_number, &cluster_address).await? {
-			info!("Block #{} is already executed", block_number);
+			info!("⚡  Execute Block - Block #{} is already executed", block_number);
 			return Ok(vec![])
 		}
 
@@ -281,7 +281,7 @@ impl<'a> ExecuteBlock {
 										};
 										let db_tx_conn = DbTxConn::POSTGRES(p_conn);
 										tokio::runtime::Runtime::new()
-											.expect("error creating pg execute block runtime")
+											.expect("⚡  Execute Block - error creating pg execute block runtime")
 											.block_on(async {
 												let result = if block.is_system_block() {
 													Self::execute_system_block_inner(
@@ -314,28 +314,28 @@ impl<'a> ExecuteBlock {
 												Ok(events) => Ok(events),
 												Err(e) => {
 													let _ = tx.send(e).map_err(|e| {
-														error!("execute_block tx send error: {e:?}")
+														error!("⚡ 🚨  Execute Block - execute_block tx send error: {e:?}")
 													});
 													Err(DieselError::RollbackTransaction)
 												},
 											}
 										},
 										Err(e) => {
-											error!("execute_block error: {:?}", e);
+											error!("⚡ 🚨  Execute Block - execute_block error: {:?}", e);
 											Err(DieselError::RollbackTransaction)
 										},
 									},
 									None => {
-										error!("execute_block error: no result");
+										error!("⚡ 🚨  Execute Block - execute_block error: no result");
 										Err(DieselError::RollbackTransaction)
 									},
 								}
 							}) {
 								Ok(events) => events,
 								Err(e) => {
-									error!("Execute Block has been reverted, error: {:?}", e);
-									let detailed_err = rx.await.unwrap_or_else(|e| anyhow!("recv error: {e:?}"));
-									Err(anyhow!("Execute Block error: {e:?}, {detailed_err:?}"))?
+									error!("⚡ 🚨  Execute Block - Execute Block has been reverted, error: {:?}", e);
+									let detailed_err = rx.await.unwrap_or_else(|e| anyhow!("⚡ 🚨  Execute Block - Receive error: {e:?}"));
+									Err(anyhow!("⚡ 🚨  Execute Block - Execute Block error: {e:?}, {detailed_err:?}"))?
 								},
 							};
 						ret_events = event1;
@@ -352,7 +352,7 @@ impl<'a> ExecuteBlock {
 										};
 										let db_tx_conn = DbTxConn::POSTGRES(p_conn);
 										tokio::runtime::Runtime::new()
-											.expect("error creating pg execute block runtime")
+											.expect("⚡ 🚨  Execute Block - error creating pg execute block runtime")
 											.block_on(async {
 												let result = if block.is_system_block() {
 													Self::execute_system_block_inner(
@@ -385,28 +385,28 @@ impl<'a> ExecuteBlock {
 												Ok(events) => Ok(events),
 												Err(e) => {
 													let _ = tx.send(e).map_err(|e| {
-														error!("execute_block tx send error: {e:?}")
+														error!("⚡ 🚨  Execute Block - execute_block tx send error: {e:?}")
 													});
 													Err(DieselError::RollbackTransaction)
 												},
 											}
 										},
 										Err(e) => {
-											error!("execute_block error: {:?}", e);
+											error!("⚡ 🚨  Execute Block - execute_block error: {:?}", e);
 											Err(DieselError::RollbackTransaction)
 										},
 									},
 									None => {
-										error!("execute_block error: no result");
+										error!("⚡ 🚨  Execute Block - execute_block error: no result");
 										Err(DieselError::RollbackTransaction)
 									},
 								}
 							}) {
 								Ok(events) => events,
 								Err(e) => {
-									error!("Execute Block has been reverted, error: {:?}", e);
-									let detailed_err = rx.await.unwrap_or_else(|e| anyhow!("recv error: {e:?}"));
-									Err(anyhow!("Execute Block error: {e:?}, {detailed_err:?}"))?
+									error!("⚡ 🚨  Execute Block - Execute Block has been reverted, error: {:?}", e);
+									let detailed_err = rx.await.unwrap_or_else(|e| anyhow!("⚡ 🚨  Execute Block - Receive error: {e:?}"));
+									Err(anyhow!("⚡ 🚨  Execute Block - Execute Block error: {e:?}, {detailed_err:?}"))?
 								},
 							};
 						ret_events = event1;
@@ -414,10 +414,10 @@ impl<'a> ExecuteBlock {
 				}
 			},
 			DbTxConn::CASSANDRA(_session) => {
-				Err(anyhow!("execute_block: Cassandra is not supported"))?
+				Err(anyhow!("⚡ 🚨  Execute Block - Cassandra is not supported"))?
 			},
 			DbTxConn::ROCKSDB(_db_path) => {
-				Err(anyhow!("execute_block: RocksDB is not supported"))?
+				Err(anyhow!("⚡ 🚨  Execute Block - RocksDB is not supported"))?
 			},
 		}
 
@@ -459,9 +459,9 @@ impl<'a> ExecuteBlock {
 			Ok(_) => {
 				is_success = true;
 				match &event {
-					None => info!("execute_transaction no error"),
+					None => info!("⚡  Execute Block - Transaction has been executed successfully"),
 					Some(e) => info!(
-						"execute_transaction no error: {}",
+						"⚡  Execute Block - Transaction has been executed successfully: {}",
 						hex::encode(e)
 					),
 				} 
@@ -469,7 +469,7 @@ impl<'a> ExecuteBlock {
 			Err(error) => return Err(TransactionResult { event, fee: total_fee, gas_burnt: total_gas_burnt, is_success: false, error: Some(error) }),
 		}
 
-		info!("execute_transaction: event: {:?}, fee_used: {}, gas burnt: {}", event.as_ref().and_then(|v| Some(hex::encode(v))), total_fee, total_gas_burnt);
+		info!("⚡  Execute Block - Transaction has been executed successfully: event: {:?}, fee_used: {}, gas burnt: {}", event.as_ref().and_then(|v| Some(hex::encode(v))), total_fee, total_gas_burnt);
 		Ok(TransactionResult { event, fee: total_fee, gas_burnt: total_gas_burnt, is_success, error: None })
 	}
 
@@ -505,7 +505,7 @@ impl<'a> ExecuteBlock {
 				*fees = fees_value; // Update fees
 			}
 			Err(fees_value) => {
-				info!("Rolling back simulated transaction");
+				info!("⚡  Execute Block - Rolling back simulated transaction");
 				*fees = fees_value;
 			}
 		}
@@ -515,15 +515,15 @@ impl<'a> ExecuteBlock {
 
 async fn apply_system_contracts_changes(updated_state: &UpdatedState, block_header: &BlockHeader) -> Result<(), Error> {
 	if updated_state.is_contract_state_updated(&system_contracts::CONFIG_CONTRACT_INSTANCE_ADDRESS) {
-		info!("Try to refresh System Config cache");
+		info!("⚡  Execute Block - Try to refresh System Config cache");
 		refresh_system_runtime_config(updated_state, block_header).await?
 	}
 	if updated_state.is_contract_state_updated(&system_contracts::DENYLIST_CONTRACT_INSTANCE_ADDRESS) {
-		info!("Try to refresh System Deny Config cache");
+		info!("⚡  Execute Block - Try to refresh System Deny Config cache");
 		refresh_system_runtime_deny_config(updated_state, block_header).await?
 	}
 	if updated_state.is_contract_state_updated(&system_contracts::STAKING_CONTRACT_INSTANCE_ADDRESS) {
-		info!("Try to refresh System Staking cache");
+		info!("⚡  Execute Block - Try to refresh System Staking cache");
 		refresh_system_staking_config(updated_state, block_header).await?
 	}
 	Ok(())
@@ -543,17 +543,17 @@ pub async fn refresh_system_runtime_config(updated_state: &UpdatedState, block_h
 		&block_header.block_hash,
 		&mut temp_updated_state,
 		).await.map_err(|e| {
-			error!("Could not read a new RuntimeConfig, error: {}", e);
-			anyhow!("Could not read a new RuntimeConfig, error: {}", e)
+			error!("⚡ 🚨  Execute Block - Could not read a new RuntimeConfig, error: {}", e);
+			anyhow!("⚡ 🚨  Execute Block - Could not read a new RuntimeConfig, error: {}", e)
 		})?;
 	if let Err(e) = runtime_config::RuntimeConfigCache::refresh(&result).await {
-		error!("Could not update RuntimeConfig, error: {}", e);
+		error!("⚡ 🚨  Execute Block - Could not update RuntimeConfig, error: {}", e);
 		if runtime_config::RuntimeConfigCache::is_initialized().await {
-			info!("Use the previous RuntimeConfig");
+			info!("⚡  Execute Block - Use the previous RuntimeConfig");
 			return Ok(())
 		}
 
-		info!("Try to apply the previous RuntimeConfig");
+		info!("⚡  Execute Block - Try to apply the previous RuntimeConfig");
 		let params = system_contracts::ConfigContractCallParams::prev_config();
 		let result = smart_contract_read_only_call(
 			&system_contracts::CONFIG_CONTRACT_INSTANCE_ADDRESS,
@@ -566,17 +566,17 @@ pub async fn refresh_system_runtime_config(updated_state: &UpdatedState, block_h
 			&block_header.block_hash,
 			&mut temp_updated_state,
 			).await.map_err(|e| {
-				error!("Could not read the previous RuntimeConfig, error: {}", e);
-				anyhow!("Could not read the previous RuntimeConfig, error: {}", e)
+				error!("⚡ 🚨  Execute Block - Could not read the previous RuntimeConfig, error: {}", e);
+				anyhow!("⚡ 🚨  Execute Block - Could not read the previous RuntimeConfig, error: {}", e)
 			})?;
 		if let Err(e) = runtime_config::RuntimeConfigCache::refresh(&result).await {
-			error!("Could not update the previous RuntimeConfig, error: {}", e);
+			error!("⚡ 🚨  Execute Block - Could not update the previous RuntimeConfig, error: {}", e);
 			return Err(e)
 		}
-		warn!("The previous RuntimeConfig has been applied");
+		warn!("⚡  Execute Block - The previous RuntimeConfig has been applied");
 		return Ok(());
 	}
-	info!("Runtime Config has been updated, block #{}", block_header.block_number);
+	info!("⚡  Execute Block - Runtime Config has been updated, block #{}", block_header.block_number);
 	Ok(())
 }
 
@@ -594,19 +594,19 @@ pub async fn refresh_system_runtime_deny_config(updated_state: &UpdatedState, bl
 		&block_header.block_hash,
 		&mut temp_updated_state,
 		).await.map_err(|e| {
-			error!("Could not read a new RuntimeDenyConfig, error: {}", e);
-			anyhow!("Could not read a new RuntimeDenyConfig, error: {}", e)
+			error!("⚡ 🚨  Execute Block - Could not read a new RuntimeDenyConfig, error: {}", e);
+			anyhow!("⚡ 🚨  Execute Block - Could not read a new RuntimeDenyConfig, error: {}", e)
 		})?;
 	if let Err(e) = runtime_config::RuntimeDenyConfigCache::refresh(&result).await {
-		error!("Could not update RuntimeDenyConfig, error: {}", e);
+		error!("⚡ 🚨  Execute Block - Could not update RuntimeDenyConfig, error: {}", e);
 		if runtime_config::RuntimeDenyConfigCache::is_initialized().await {
-			info!("Use the previous RuntimeDenyConfig");
+			info!("⚡  Execute Block - Use the previous RuntimeDenyConfig");
 			return Ok(())
 		}
 
 		return Err(e);
 	}
-	info!("Runtime Deny Config has been updated, block #{}", block_header.block_number);
+	info!("⚡  Execute Block - Runtime Deny Config has been updated, block #{}", block_header.block_number);
 	Ok(())
 }
 
@@ -624,13 +624,13 @@ pub async fn refresh_system_staking_config(updated_state: &UpdatedState, block_h
 		&block_header.block_hash,
 		&mut temp_updated_state,
 		).await.map_err(|e| {
-			error!("Could not read RuntimeStakingInfo, error: {}", e);
-			anyhow!("Could not read RuntimeStakingInfo, error: {}", e)
+			error!("⚡ 🚨  Execute Block - Could not read RuntimeStakingInfo, error: {}", e);
+			anyhow!("⚡ 🚨  Execute Block - Could not read RuntimeStakingInfo, error: {}", e)
 		})?;
 	
 	runtime_config::RuntimeStakingInfoCache::refresh(&result).await?;
 
-	info!("Runtime StakingInfo has been updated, block #{}", block_header.block_number);
+	info!("⚡  Execute Block - Runtime StakingInfo has been updated, block #{}", block_header.block_number);
 	
 	Ok(())
 }

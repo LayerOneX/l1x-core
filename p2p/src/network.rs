@@ -137,7 +137,7 @@ impl NetworkState {
     }
 
     pub async fn add_active_peer(&self, peer_id: PeerId) -> Result<(), Box<dyn Error + Send>> {
-        debug!("add_active_peer ~ Adding peer: {:?}", peer_id);
+        debug!("🔍 Network - Connection Established | Adding peer: {:?}", peer_id);
 
         // Add peer to the list of available peers
         {
@@ -166,7 +166,7 @@ impl NetworkState {
     }
 
     pub async fn remove_active_peer(&self, peer_id: PeerId) -> Result<(), Box<dyn Error + Send>> {
-        debug!("remove_active_peer ~ Removing peer: {:?}", peer_id);
+        debug!("🔍 Network - Connection Closed | Removing peer: {:?}", peer_id);
 
         let peers_exists = {
             let mut available_peers_list = self.available_peers_list_by_peer_id.write();
@@ -218,7 +218,7 @@ impl NetworkState {
     }
 
     pub async fn update_active_peer_address(&self, peer_id: PeerId, address: Address) -> Result<(), Box<dyn Error + Send>> {
-        debug!("update_active_peer_address ~ Updating address {:?} for peer: {:?}", address, peer_id);
+        debug!("🔍 Network - Connection Established | Updating address {:?} for peer: {:?}", address, peer_id);
         
         {
             let mut available_peers_by_peer_id = self.available_peers_by_peer_id.write();
@@ -239,9 +239,9 @@ impl NetworkState {
                 peer_status_info.insert(peer_id, status_info.clone());
             }
             
-            debug!("update_active_peer_status_info ~ Updated status info for peer: {:?}, status info: {:?}", peer_id, status_info);
+            debug!("🔍 Network - Connection Established | Updated status info for peer: {:?}, status info: {:?}", peer_id, status_info);
         } else {
-            warn!("update_active_peer_status_info ~ Peer not found: {:?}", peer_id);
+            warn!("⚠️ Network - Connection Established | Peer not found: {:?}", peer_id);
         }
         Ok(())
     }
@@ -252,7 +252,7 @@ impl NetworkState {
             Some(peer_status_info) => Some(peer_status_info.clone()),
             None => {
                 warn!(
-                    "get_peer_status_info ~ PeerId not found in peer_status_info: {:?}",
+                    "⚠️ Network - Connection Established | PeerId not found in peer_status_info: {:?}",
                     peer_id
                 );
                 None
@@ -273,6 +273,8 @@ pub async fn new(
     bootnodes: &[&str],
     dht_health_storage: DHTHealthStorage,
     autonat_config: &Option<system::config::AutonatConfig>,
+    eth_chain_id: Option<u64>,
+    cluster_address: Option<String>,
 ) -> Result<(Client, mpsc::Receiver<Event>, EventLoop), Box<dyn Error>> {
     // Create a public/private key pair, either random or based on a seed.
     let local_peer_id = local_keys.public().to_peer_id();
@@ -285,6 +287,17 @@ pub async fn new(
         .multiplex(yamux::Config::default())
         .timeout(std::time::Duration::from_secs(20))
         .boxed();
+
+    // Create topic hashes using network information if available
+    // let topic_prefix = if let (Some(chain_id), Some(cluster)) = (eth_chain_id, &cluster_address) {
+    //     // We truncate cluster_address to 8 chars to keep topic name reasonable length
+    //     let cluster_short = &cluster[0..std::cmp::min(8, cluster.len())];
+    //     format!("l1x/{}/{}", chain_id, cluster_short)
+    // } else if let Some(chain_id) = eth_chain_id {
+    //     format!("l1x/{}", chain_id)
+    // } else {
+    //     "l1x".to_string()
+    // };
 
     // Create new topic for transactions
     let node_join_topic = get_topic_hash(NODE_INFO_TOPIC);
@@ -317,29 +330,35 @@ pub async fn new(
     // 	topics.push(vote_topic);
     // }
 
+    // Create network identifier with network information
+    let network_id = "/ipfs/id/1.0.0/l1x".to_string();
+
     // Build the Swarm, connecting the lower layer transport logic with the
     // higher layer network behaviour logic.
     let swarm = {
         let mut behaviour = Behaviour {
             identify: identify::Behaviour::new(identify::Config::new(
-                "/ipfs/id/1.0.0".to_string(),
+                network_id,
                 local_keys.public(),
             )),
             // mdns: mdns::tokio::Behaviour::new(mdns::Config::default(), local_peer_id)?,
             kademlia: kademlia_behaviour(local_peer_id),
             gossipsub: gossipsub_behaviour(local_keys.clone(), topics)?,
             auto_nat: autonat_behaviour(local_peer_id, autonat_config),
-            request_response: libp2p::request_response::Behaviour::new(
-                L1xCodec,
-                vec![(L1xProtocol, ProtocolSupport::Full)],
-                request_response::Config::default(),
-            ),
+            request_response: {
+                debug!("🔍 Network - Protocol | Creating request_response behavior with chain_id: {:?}, cluster: {:?}", eth_chain_id, cluster_address);
+                libp2p::request_response::Behaviour::new(
+                    L1xCodec,
+                    vec![(L1xProtocol::new(eth_chain_id, cluster_address.clone()), ProtocolSupport::Full)],
+                    request_response::Config::default(),
+                )
+            },
         };
 
         // If provided, bootstrap routing table with bootnode(s)
         if !bootnodes.is_empty() {
             for bootnode in bootnodes {
-                info!("Bootstrapping to: {}", bootnode);
+                info!("🔌 Network - Bootstrapping | Bootstrapping to: {}", bootnode);
                 let (peer, _, address) = bootnode.rsplitn(3, "/").into_iter().tuples().next().ok_or(anyhow!("Invalid bootnode address, expecting format /ip4/<address>/tcp/<port>/p2p/<peer_id>, got {bootnode}"))?;
                 behaviour.kademlia.add_address(&peer.parse()?, address.parse()?);
                 behaviour.auto_nat.add_server(
@@ -360,7 +379,7 @@ pub async fn new(
         sender: command_sender,
         event_sender: event_sender.clone(),
     };
-    let event_loop = EventLoop::new(swarm, command_receiver, event_sender, dht_health_storage);
+    let event_loop = EventLoop::new(swarm, command_receiver, event_sender, dht_health_storage, eth_chain_id, cluster_address.clone());
 
     // Start peer discovery
     // match client.start_peer_discovery().await {
@@ -421,7 +440,7 @@ impl Client {
 
 	pub async fn init_node_monitoring(&self, cluster_address: Address, latest_epoch: Epoch, peer_id: PeerId) -> Result<(), Box<dyn Error + Send>> {
 
-		debug!("🏥 Initializing node monitoring");
+		debug!("🔍 Network - Node Monitoring | Initializing node monitoring");
 
 		const NODE_HEALTH_MONITORING_LOOP_INTERVAL: u64 = 10;
 		const NODE_STATUS_MONITORING_LOOP_INTERVAL: u64 = 12;
@@ -429,23 +448,23 @@ impl Client {
 		const NODE_DETAILS_STATUS_BROADCASTING_LOOP_INTERVAL: u64 = 30;
 
 		match self.start_node_health_monitoring(NODE_HEALTH_MONITORING_LOOP_INTERVAL).await {
-			Ok(_) => debug!("🏥 Successfully started node health monitoring"),
-			Err(e) => warn!("🏥 Failed to start node health monitoring: {:?}", e),
+			Ok(_) => debug!("🔍 Network - Node Monitoring | Successfully started node health monitoring"),
+			Err(e) => warn!("⚠️ Network - Node Monitoring | Failed to start node health monitoring: {:?}", e),
 		};
 
 		match self.start_node_status_monitoring(NODE_STATUS_MONITORING_LOOP_INTERVAL).await {
-			Ok(_) => debug!("🏥 Successfully started node status monitoring"),
-			Err(e) => warn!("🏥 Failed to start node status monitoring: {:?}", e),
+			Ok(_) => debug!("🔍 Network - Node Monitoring | Successfully started node status monitoring"),
+			Err(e) => warn!("⚠️ Network - Node Monitoring | Failed to start node status monitoring: {:?}", e),
 		};
 
 		match self.start_ping_eligible_peers(PING_ELIGIBLE_PEERS_LOOP_INTERVAL, latest_epoch).await {
-			Ok(_) => debug!("🏥 Successfully started ping eligible peers"),
-			Err(e) => warn!("🏥 Failed to start ping eligible peers: {:?}", e),
+			Ok(_) => debug!("🔍 Network - Node Monitoring | Successfully started ping eligible peers"),
+			Err(e) => warn!("⚠️ Network - Node Monitoring | Failed to start ping eligible peers: {:?}", e),
 		};
 
 		match self.start_node_details_status_broadcasting(NODE_DETAILS_STATUS_BROADCASTING_LOOP_INTERVAL, peer_id).await {
-			Ok(_) => debug!("🏥 Successfully started node details status broadcasting"),
-			Err(e) => warn!("🏥 Failed to start node details status broadcasting: {:?}", e),
+			Ok(_) => debug!("🔍 Network - Node Monitoring | Successfully started node details status broadcasting"),
+			Err(e) => warn!("⚠️ Network - Node Monitoring | Failed to start node details status broadcasting: {:?}", e),
 		};
 		
 		Ok(())
@@ -453,7 +472,7 @@ impl Client {
 	
     pub async fn start_node_health_monitoring(&self, loop_interval: u64) -> Result<(), Box<dyn Error + Send>> {
         let sender = self.event_sender.clone();
-        log::info!("🏥 Starting node health monitoring");
+        info!("🏥 Network - Node Health Monitoring | Starting node health monitoring");
         let block_manager = BlockManager {};
 
         tokio::spawn(async move {
@@ -468,7 +487,7 @@ impl Client {
                 let latest_block_number = match block_manager_cache.get_last_executed_block_header().await {
                     Ok(block_header) => block_header.block_number,
                     Err(e) => {
-                        log::error!("start_node_health_monitoring ~ Unable to get latest block number: {}", e);
+                        error!("🚨 Network - Node Health Monitoring | Unable to get latest block number: {}", e);
                         continue;
                     }
                 };
@@ -476,13 +495,13 @@ impl Client {
                 let current_epoch = match block_manager.calculate_current_epoch(latest_block_number) {
                     Ok(epoch) => epoch,
                     Err(e) => {
-                        log::error!("start_node_health_monitoring ~ Unable to calculate current epoch: {}", e);
+                        error!("🚨 Network - Node Health Monitoring | Unable to calculate current epoch: {}", e);
                         continue;
                     }
                 };
 
                
-				log::debug!("start_node_health_monitoring ~ Block is executed, processing node health for epoch: {}, last_processed_epoch: {:?}, block_number: {}", 
+				debug!("🔍 Network - Node Monitoring | Block is executed, processing node health for epoch: {}, last_processed_epoch: {:?}, block_number: {}", 
 							current_epoch.clone(), 
 							last_processed_epoch.clone(), 
 							latest_block_number.clone());
@@ -493,20 +512,20 @@ impl Client {
 						Ok(true) => {
 							if let Err(e) = sender.send(Event::ProcessNodeHealth { epoch: current_epoch }).await
 							{
-								log::error!("Failed to send ProcessNodeHealth event: {}", e);
+								error!("🚨 Network - Node Health Monitoring | Failed to send ProcessNodeHealth event: {}", e);
 							} else {
 								last_processed_epoch = Some(current_epoch);
 							}
 						}
 						Ok(false) => {}
 						Err(e) => {
-							log::error!("Error checking if epoch is approaching end: {}", e);
+							error!("🚨 Network - Node Health Monitoring | Error checking if epoch is approaching end: {}", e);
 						}
 					}
 				}
 
-				log::debug!(
-					"start_node_health_monitoring ~ Last aggregated epoch: {:?}",
+				debug!(
+					"🔍 Network - Node Monitoring | Last aggregated epoch: {:?}",
 					last_aggregated_epoch.clone()
 				);
 				// Aggregate node health
@@ -516,14 +535,14 @@ impl Client {
 							if let Err(e) =
 								sender.send(Event::AggregateNodeHealth { epoch: current_epoch }).await
 							{
-								log::error!("Failed to send health update command: {}", e);
+								error!("🚨 Network - Node Health Monitoring | Failed to send health update command: {}", e);
 							} else {
 								last_aggregated_epoch = Some(current_epoch);
 							}
 						}
 						Ok(false) => {}
 						Err(e) => {
-							log::error!("Error checking if epoch is approaching end: {}", e);
+							error!("🚨 Network - Node Health Monitoring | Error checking if epoch is approaching end: {}", e);
 						}
 					}
 				}
@@ -535,14 +554,14 @@ impl Client {
     }
 
     pub async fn start_node_status_monitoring(&self, loop_interval: u64) -> Result<(), Box<dyn Error + Send>> {
-        info!("start_node_monitoring ~ Node monitoring has started");
+        info!("🏥 Network - Node Status Monitoring | Node monitoring has started");
         let sender = self.event_sender.clone();
         let mut interval = tokio::time::interval(Duration::from_secs(loop_interval));
         tokio::spawn(async move {
             loop {
                 interval.tick().await;
                 if let Err(e) = sender.send(Event::CheckNodeStatus).await {
-                    log::error!("Failed to send check-node-status command: {}", e);
+                    error!("🚨 Network - Node Status Monitoring | Failed to send check-node-status command: {}", e);
                 }
             }
         });
@@ -560,7 +579,7 @@ impl Client {
 				if let Err(e) = sender.send(Event::PublishNodeDetailedStatus{
 					peer_id: peer_id.to_string()
 				}).await {
-					log::error!("Failed to send publish-node-detailed-status command: {}", e);
+					error!("🚨 Network - Node Details Status Broadcasting | Failed to send publish-node-detailed-status command: {}", e);
 				}
 			}
 		});
@@ -598,12 +617,12 @@ impl Client {
                 let active_peers = match network_state.get_available_peers().await {
                     Ok(peers) => peers,
                     Err(e) => {
-                        error!("Failed to get active peers: {}", e);
+                        error!("🚨 Network - Ping Eligible Peers | Failed to get active peers: {}", e);
                         continue;
                     }
                 };
 
-                info!("start_ping_eligible_peers ~ Active peers: {:?}", active_peers);
+                info!("🏥 Network - Ping Eligible Peers | Active peers: {:?}", active_peers);
 
                 let _ = sender
                     .send(Event::PingEligiblePeers {
@@ -611,7 +630,7 @@ impl Client {
                         peer_ids: active_peers.iter().map(|peer| peer.to_string()).collect::<Vec<String>>(),
                     })
                     .await
-                    .unwrap_or_else(|e| error!("Failed to send PingEligiblePeers event: {:?}", e));
+                    .unwrap_or_else(|e| error!("🚨 Network - Ping Eligible Peers | Failed to send PingEligiblePeers event: {:?}", e));
 
             }
         });
@@ -631,7 +650,7 @@ impl NodeInfoBroadcast for Client {
             .await
             .unwrap_or_else(|e| {
                 error!(
-                    "Failed to send BroadcastNodeInfo command down command_sender channel: {:?}",
+                    "🚨 Network - Node Info Broadcasting | Failed to send BroadcastNodeInfo command down command_sender channel: {:?}",
                     e
                 )
             });
@@ -655,7 +674,7 @@ impl TransactionBroadcast for Client {
             .await
             .unwrap_or_else(|e| {
                 error!(
-                    "Failed to send BroadcastTransaction command down command_sender channel: {:?}",
+                    "🚨 Network - Transaction Broadcasting | Failed to send BroadcastTransaction command down command_sender channel: {:?}",
                     e
                 )
             });
@@ -679,7 +698,7 @@ impl NodeHealthBroadcast for Client {
             .await
             .unwrap_or_else(|e| {
                 error!(
-                    "Failed to send BroadcastTransaction command down command_sender channel: {:?}",
+                    "🚨 Network - Node Health Broadcasting | Failed to send BroadcastTransaction command down command_sender channel: {:?}",
                     e
                 )
             });
@@ -709,7 +728,7 @@ impl AggregatedNodeHealthBroadcast for Client {
             .await
             .unwrap_or_else(|e| {
                 error!(
-                    "Failed to send BroadcastTransaction command down command_sender channel: {:?}",
+                    "🚨 Network - Node Health Broadcasting | Failed to send BroadcastTransaction command down command_sender channel: {:?}",
                     e
                 )
             });
@@ -731,7 +750,7 @@ impl BlockBroadcast for Client {
             .send(Command::BroadcastValidateBlock { block_payload, sender })
             .await
             .unwrap_or_else(|e| {
-                error!("Failed to send BroadcastBlock command down command_sender channel: {e:?}");
+                error!("🚨 Network - Block Broadcasting | Failed to send BroadcastBlock command down command_sender channel: {e:?}");
             });
 
         match receiver.await {
@@ -758,7 +777,7 @@ impl BlockProposerBroadcast for Client {
             })
             .await
             .unwrap_or_else(|e| {
-                error!("Failed to send BroadcastBlockProposer command down command_sender channel: {e:?}");
+                error!("🚨 Network - Block Proposer Broadcasting | Failed to send BroadcastBlockProposer command down command_sender channel: {e:?}");
             });
 
         match receiver.await {
@@ -779,7 +798,7 @@ impl VoteBroadcast for Client {
             .send(Command::BroadcastVote { vote, sender })
             .await
             .unwrap_or_else(|e| {
-                error!("Failed to send BroadcastVote command down command_sender channel: {e:?}");
+                error!("🚨 Network - Vote Broadcasting | Failed to send BroadcastVote command down command_sender channel: {e:?}");
             });
 
         match receiver.await {
@@ -800,7 +819,7 @@ impl VoteResultBroadcast for Client {
             .send(Command::BroadcastVoteResult { vote_result, sender })
             .await
             .unwrap_or_else(|e| {
-                error!("Failed to send BroadcastVoteResult command down command_sender channel: {e:?}");
+                error!("🚨 Network - Vote Result Broadcasting | Failed to send BroadcastVoteResult command down command_sender channel: {e:?}");
             });
 
         match receiver.await {
@@ -829,7 +848,7 @@ impl BlockQueryRequest for Client {
             })
             .await
             .unwrap_or_else(|e| {
-                error!("Failed to query for block command down command_sender channel: {e:?}");
+                error!("🚨 Network - Block Query Request | Failed to query for block command down command_sender channel: {e:?}");
             });
 
         match receiver.await {
@@ -858,7 +877,7 @@ impl QueryBlockResponse for Client {
             })
             .await
             .unwrap_or_else(|e| {
-                error!("Failed to send response for query block command down command_sender channel: {e:?}");
+                error!("🚨 Network - Block Query Response | Failed to send response for query block command down command_sender channel: {e:?}");
             });
 
         match receiver.await {
@@ -887,7 +906,7 @@ impl QueryStatusRequest for Client {
             })
             .await
             .unwrap_or_else(|e| {
-                error!("Failed to query for status command down command_sender channel: {e:?}");
+                error!("🚨 Network - Query Status Request | Failed to query for status command down command_sender channel: {e:?}");
             });
 
         match receiver.await {
@@ -914,7 +933,7 @@ impl BroadcastNodeDetailedStatus for Client {
 			})
 			.await
 			.unwrap_or_else(|e| {
-				error!("Failed to send node detailed status command down command_sender channel: {e:?}");
+				error!("🚨 Network - Node Details Status Broadcasting | Failed to send node detailed status command down command_sender channel: {e:?}");
 			});
 
 		match receiver.await {
@@ -933,6 +952,8 @@ pub struct EventLoop {
     event_sender: mpsc::Sender<Event>,
     pending_dial: HashMap<PeerId, oneshot::Sender<Result<(), Box<dyn Error + Send>>>>,
     network_state: &'static Arc<NetworkState>,
+    eth_chain_id: Option<u64>,
+    cluster_address: Option<String>,
 }
 
 impl EventLoop {
@@ -941,6 +962,8 @@ impl EventLoop {
         command_receiver: mpsc::Receiver<Command>,
         event_sender: mpsc::Sender<Event>,
         dht_health_storage: DHTHealthStorage,
+        eth_chain_id: Option<u64>,
+        cluster_address: Option<String>,
     ) -> Self {
         Self {
             swarm,
@@ -948,6 +971,8 @@ impl EventLoop {
             event_sender,
             pending_dial: Default::default(),
             network_state: NetworkState::get_instance(),
+            eth_chain_id,
+            cluster_address,
         }
     }
 
@@ -967,12 +992,12 @@ impl EventLoop {
                     Some(c) => self.handle_command(c).await,
                     // Command channel closed, thus shutting down the network event loop.
                     None => {
-                        warn!("event_loop worker exited");
+                        warn!("⚠️ Network - Event Loop | event_loop worker exited");
                         return
                     },
                 },
                 _ = refresh_interval.tick() => {
-                    debug!("network ~ run ~ Refreshing swarm");
+                    debug!("🔍 Network - Event Loop | Refreshing swarm");
                     self.swarm.behaviour_mut().kademlia.get_closest_peers(local_peer_id);
                 },
             }
@@ -998,7 +1023,7 @@ impl EventLoop {
             SwarmEvent::NewListenAddr { address, .. } => {
                 let local_peer_id = *self.swarm.local_peer_id();
                 info!(
-                    "Local node is listening on {:?}",
+                    "🏥 Network - New Listen Address | Local node is listening on {:?}",
                     address.with(Protocol::P2p(local_peer_id.into()))
                 );
             }
@@ -1009,22 +1034,19 @@ impl EventLoop {
                         let _ = sender.send(Ok(()));
                     }
 
-                    debug!("ConnectionEstablished ~ Peer ID: {:?}", peer_id);
                     info!(
-                        "network ~ handle_event ~ ConnectionEstablished ~ peer_id: {:?}",
-                        peer_id
-                    );
-                    info!(
-                        "network ~ handle_event ~ ConnectionEstablished ~ get_remote_address: {:?}",
+                        "🏥 Network - Connection Established | Swarm Event | Peer ID: {:?}, Remote Address: {:?}",
+                        peer_id,
                         endpoint.get_remote_address()
                     );
+                    
 
                     // Update the active peers to lazy static ACTIVE_PEERS
                     let network_state = NetworkState::get_instance();
                     match network_state.add_active_peer(peer_id).await {
-                        Ok(_) => debug!("ConnectionEstablished ~ Peer ID: {:?} added to ACTIVE_PEERS", peer_id),
+                        Ok(_) => debug!("🔍 Network - Connection Established | Swarm Event | Peer ID: {:?} added to ACTIVE_PEERS", peer_id),
                         Err(e) => error!(
-                            "ConnectionEstablished ~ Peer ID: {:?} failed to add to ACTIVE_PEERS: {:?}",
+                            "🚨 Network - Connection Established | Swarm Event | Peer ID: {:?} failed to add to ACTIVE_PEERS: {:?}",
                             peer_id, e
                         ),
                     }
@@ -1037,19 +1059,19 @@ impl EventLoop {
                 ..
             } => {
                 if let Some(cause) = cause {
-                    warn!("Connection closed with peer {}: {}", peer_id, cause);
+                    warn!("⚠️ Network - Connection Closed | Connection closed with peer {}: {}", peer_id, cause);
                 } else {
-                    warn!("Connection closed with peer {}", peer_id);
+                    warn!("⚠️ Network - Connection Closed | Connection closed with peer {}", peer_id);
                 }
                 // self.handle_peer_disconnection(peer_id).await;
 
-                debug!("ConnectionClosed ~ Peer ID: {:?}", peer_id);
+                debug!("🔍 Network - Connection Closed | Swarm Event | Peer ID: {:?}", peer_id);
 
                 let network_state = NetworkState::get_instance();
                 match network_state.remove_active_peer(peer_id).await {
-                    Ok(_) => debug!("ConnectionClosed ~ Peer ID: {:?} removed from ACTIVE_PEERS", peer_id),
+                    Ok(_) => debug!("🔍 Network - Connection Closed | Swarm Event | Peer ID: {:?} removed from ACTIVE_PEERS", peer_id),
                     Err(e) => error!(
-                        "ConnectionClosed ~ Peer ID: {:?} failed to remove from ACTIVE_PEERS: {:?}",
+                        "🚨 Network - Connection Closed | Swarm Event | Peer ID: {:?} failed to remove from ACTIVE_PEERS: {:?}",
                         peer_id, e
                     ),
                 }
@@ -1070,28 +1092,28 @@ impl EventLoop {
                 local_addr,
                 send_back_addr,
             } => {
-                warn!("Error: local_addr={local_addr:?}, send_back_addr={send_back_addr:?}, error={error:?}")
+                warn!("⚠️ Network - Incoming Connection Error | Error: local_addr={local_addr:?}, send_back_addr={send_back_addr:?}, error={error:?}")
             }
-            SwarmEvent::Dialing(peer_id) => info!("Dialing {peer_id}"),
+            SwarmEvent::Dialing(peer_id) => info!("🏥 Network - Dialing | Dialing Peer ID: {peer_id}"),
             SwarmEvent::Behaviour(event) => match event {
                 BehaviourEvent::Identify(event) => match event {
                     // Prints peer id identify info is being sent to.
                     identify::Event::Sent { peer_id, .. } => {
-                        info!("Sent identify info to {peer_id:?}")
+                        info!("🏥 Network - Identify | Sent identify info to Peer ID:{peer_id:?}")
                     }
                     // Prints out the info received via the identify event
                     identify::Event::Received { peer_id, info } => {
-                        info!("Received {info:?} from {peer_id:?}");
+                        info!("🏥 Network - Identify | Received {info:?} from Peer ID: {peer_id:?}");
                         let local_peer_id = self.swarm.local_peer_id().clone();
                         self.swarm.behaviour_mut().kademlia.get_closest_peers(local_peer_id);
                     }
-                    _ => info!("Some Identify event received: {event:?}"),
+                    _ => info!("🏥 Network - Identify | Some Identify event received: {event:?}"),
                 },
                 BehaviourEvent::Kademlia(event) => match event {
                     KademliaEvent::OutboundQueryProgressed { result, id, .. } => match result {
                         QueryResult::Bootstrap(result) => match result {
                             Ok(res) => {
-                                info!("BOOTSTRAP SUCCESS: {res:?}");
+                                info!("🏥 Network - Kademlia | Bootstrap Success: {res:?}");
                                 // Initialize peers after successful bootstrap
                                 let mut peer_ids: Vec<String> = Vec::new();
                                 for bucket in self.swarm.behaviour_mut().kademlia.kbuckets() {
@@ -1109,11 +1131,11 @@ impl EventLoop {
                                             peer_ids,
                                         })
                                         .await
-                                        .unwrap_or_else(|e| error!("Failed to send PingEligiblePeers event: {:?}", e));
+                                        .unwrap_or_else(|e| error!("🚨 Network - Ping Eligible Peers | Failed to send PingEligiblePeers event: {:?}", e));
                                 }
                             }
                             Err(e) => {
-                                error!("BOOTSTRAP FAILURE: {e:?}");
+                                error!("🚨 Network - Kademlia | Bootstrap Failure: {e:?}");
                             }
                         },
                         QueryResult::GetClosestPeers(result) => match result {
@@ -1145,13 +1167,13 @@ impl EventLoop {
 
                                 while let Some((peer_id, result)) = futures.next().await {
                                     match result {
-                                        Ok(Ok(())) => info!("Successfully connected to a peer: {peer_id:}"),
+                                        Ok(Ok(())) => info!("🏥 Network - Kademlia | Successfully connected to a peer: {peer_id:}"),
                                         Ok(Err(e)) => {
-                                            debug!("Failed to connect to a peer: {peer_id:}, error: {e:}");
+                                            debug!("🔍 Network - Kademlia | Failed to connect to a peer: {peer_id:}, error: {e:}");
                                             // Remove the peer from Kademlia and local store
                                             self.swarm.behaviour_mut().kademlia.remove_peer(&peer_id);
                                         }
-                                        Err(e) => debug!("Failed to receive result for peer: {peer_id:}, error: {e:}"),
+                                        Err(e) => debug!("🔍 Network - Kademlia | Failed to receive result for peer: {peer_id:}, error: {e:}"),
                                     }
                                 }
 
@@ -1175,7 +1197,7 @@ impl EventLoop {
 										match block_manager_cache.get_last_executed_block_header().await {
 											Ok(last_executed_block_header) => last_executed_block_header.epoch,
 											Err(e) => {
-												error!("Failed to get last executed block header: {:?}", e);
+												error!("🚨 Network - Kademlia | Failed to get last executed block header: {:?}", e);
 												0
 											}
 										}
@@ -1189,23 +1211,23 @@ impl EventLoop {
                                             peer_ids: active_peers.iter().map(|peer_id| peer_id.to_string()).collect(),
                                         })
                                         .await
-                                        .unwrap_or_else(|e| error!("Failed to send PingEligiblePeers event: {:?}", e));
+                                        .unwrap_or_else(|e| error!("🚨 Network - Ping Eligible Peers | Failed to send PingEligiblePeers event: {:?}", e));
                                 }
                             }
                             Err(e) => {
-                                warn!("GetClosestPeers query failed: {:?}", e);
+                                warn!("⚠️ Network - Kademlia | GetClosestPeers query failed: {:?}", e);
                             }
                         },
-                        _ => info!("Some OutboundQueryProgressed event received: {result:?}"),
+                        _ => info!("🏥 Network - Kademlia | Some OutboundQueryProgressed event received: {result:?}"),
                     },
                     KademliaEvent::RoutingUpdated { peer, .. } => {
-                        info!("Kademlia routing updated: {peer:?}")
+                        info!("🏥 Network - Kademlia | Kademlia routing updated: {peer:?}")
                     }
-                    _ => info!("Some Kademlia event received: {event:?}"),
+                    _ => info!("🏥 Network - Kademlia | Some Kademlia event received: {event:?}"),
                 },
                 BehaviourEvent::Gossipsub(event) => match event {
                     gossipsub::Event::Subscribed { peer_id, topic } => {
-                        info!("Peer: {peer_id:?} subscribed to '{topic:?}'");
+                        info!("🏥 Network - Gossipsub | Peer ID: {peer_id:?} subscribed to topic: '{topic:?}'");
 
                         // Access addresses through the Kademlia routing table
                         let addresses: Vec<Multiaddr> = self
@@ -1237,21 +1259,21 @@ impl EventLoop {
                             .collect();
 
                         if addresses.is_empty() {
-                            debug!("No known addresses for peer: {peer_id:?}");
+                            debug!("🔍 Network - Gossipsub | No known addresses for peer: {peer_id:?}");
                         } else {
                             for addr in &addresses {
-                                info!("BehaviourEvent::Gossipsub ~ gossipsub::Event::Subscribed ~ Peer address: {addr} for peer: {peer_id:?}");
+                                info!("🏥 Network - Gossipsub | Peer address: {addr} for peer: {peer_id:?}");
                             }
                         }
 
                         let network_state = NetworkState::get_instance();
                         match network_state.add_active_peer(peer_id).await {
-                            Ok(_) => debug!("Peer: {peer_id:?} added to ACTIVE_PEERS"),
-                            Err(e) => error!("Peer: {peer_id:?} failed to add to ACTIVE_PEERS: {:?}", e),
+                            Ok(_) => debug!("🔍 Network - Gossipsub | Peer: {peer_id:?} added to ACTIVE_PEERS"),
+                            Err(e) => error!("🚨 Network - Gossipsub | Peer: {peer_id:?} failed to add to ACTIVE_PEERS: {:?}", e),
                         }
                     }
                     gossipsub::Event::Unsubscribed { peer_id, topic } => {
-                        info!("Peer: {peer_id:?} unsubscribed from '{topic:?}'");
+                        info!("🏥 Network - Gossipsub | Peer ID: {peer_id:?} unsubscribed from topic: '{topic:?}'");
 
                         // let network_state = NetworkState::get_instance();
                         // match network_state.remove_active_peer(peer_id).await {
@@ -1273,8 +1295,8 @@ impl EventLoop {
 									// Add the active peer to the lazy static NetworkState
 									{
 										match network_state.add_active_peer(peer_id).await {
-											Ok(_) => debug!("Peer: {peer_id:?} added to ACTIVE_PEERS"),
-											Err(e) => error!("Peer: {peer_id:?} failed to add to ACTIVE_PEERS: {:?}", e),
+											Ok(_) => debug!("🔍 Network - Gossipsub | Peer: {peer_id:?} added to ACTIVE_PEERS"),
+											Err(e) => error!("🚨 Network - Gossipsub | Peer: {peer_id:?} failed to add to ACTIVE_PEERS: {:?}", e),
 										}
 									}
 
@@ -1282,8 +1304,8 @@ impl EventLoop {
 									{
 										let address = node_info.address.clone();
 										match network_state.update_active_peer_address(peer_id, address).await {
-											Ok(_) => debug!("Peer: {peer_id:?} updated with address: {address:?}"),
-											Err(e) => error!("Peer: {peer_id:?} failed to update with address: {address:?}: {:?}", e),
+											Ok(_) => debug!("🔍 Network - Gossipsub | Peer: {peer_id:?} updated with address: {address:?}"),
+											Err(e) => error!("🚨 Network - Gossipsub | Peer: {peer_id:?} failed to update with address: {address:?}: {:?}", e),
 										}
 									}
 
@@ -1293,11 +1315,11 @@ impl EventLoop {
                                         .send(Event::InboundNodeInfo { node_info })
                                         .await
                                         .unwrap_or_else(|e| {
-                                            error!("Failed to send incoming node_info to receiver: {:?}", e)
+                                            error!("🚨 Network - Gossipsub | Failed to send incoming node_info to receiver: {:?}", e)
                                         });
                                 }
                                 Err(e) => {
-                                    warn!("Can't deserialize NodeInfo from peer {}: {}", peer_id, e)
+                                    warn!("⚠️ Network - Gossipsub | Can't deserialize NodeInfo from peer {}: {}", peer_id, e)
                                 }
                             },
                             TRANSACTIONS_TOPIC => {
@@ -1308,11 +1330,11 @@ impl EventLoop {
                                             .send(Event::InboundTransaction { transaction })
                                             .await
                                             .unwrap_or_else(|e| {
-                                                error!("Failed to send incoming tx to receiver: {:?}", e)
+                                                error!("🚨 Network - Gossipsub | Failed to send incoming tx to receiver: {:?}", e)
                                             });
                                     }
                                     Err(e) => {
-                                        warn!("Can't deserialize Transaction from peer {}: {}", peer_id, e)
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize Transaction from peer {}: {}", peer_id, e)
                                     }
                                 }
                             }
@@ -1335,7 +1357,7 @@ impl EventLoop {
                                                 .send(Event::PingEligiblePeers { epoch: 0, peer_ids })
                                                 .await
                                                 .unwrap_or_else(|e| {
-                                                    error!("Failed to send PingEligiblePeers event: {:?}", e)
+                                                    error!("🚨 Network - Gossipsub | Failed to send PingEligiblePeers event: {:?}", e)
                                                 });
                                         }
 
@@ -1345,13 +1367,13 @@ impl EventLoop {
                                             .await
                                             .unwrap_or_else(|e| {
                                                 error!(
-                                                    "Failed to send incoming block_payload validate to receiver: {:?}",
+                                                    "🚨 Network - Gossipsub | Failed to send incoming block_payload validate to receiver: {:?}",
                                                     e
                                                 )
                                             });
                                     }
                                     Err(e) => {
-                                        warn!("Can't deserialize BlockValidatePayload from peer {}: {}", peer_id, e)
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize BlockValidatePayload from peer {}: {}", peer_id, e)
                                     }
                                 }
                             }
@@ -1364,13 +1386,13 @@ impl EventLoop {
                                             .await
                                             .unwrap_or_else(|e| {
                                                 error!(
-                                                    "Failed to send incoming block_proposer_payload to receiver: {:?}",
+                                                    "🚨 Network - Gossipsub | Failed to send incoming block_proposer_payload to receiver: {:?}",
                                                     e
                                                 )
                                             });
                                     }
                                     Err(e) => {
-                                        warn!("Can't deserialize BlockProposerPayload from peer {}: {}", peer_id, e)
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize BlockProposerPayload from peer {}: {}", peer_id, e)
                                     }
                                 }
                             }
@@ -1378,11 +1400,11 @@ impl EventLoop {
                                 Ok(vote) => {
                                     let _ =
                                         self.event_sender.send(Event::InboundVote { vote }).await.unwrap_or_else(|e| {
-                                            error!("Failed to send incoming vote to receiver: {:?}", e)
+                                            error!("🚨 Network - Gossipsub | Failed to send incoming vote to receiver: {:?}", e)
                                         });
                                 }
                                 Err(e) => {
-                                    warn!("Can't deserialize Vote: {}", e)
+                                    warn!("⚠️ Network - Gossipsub | Can't deserialize Vote: {}", e)
                                 }
                             },
                             VOTE_RESULT_TOPIC => {
@@ -1393,11 +1415,11 @@ impl EventLoop {
                                             .send(Event::InboundVoteResult { vote_result })
                                             .await
                                             .unwrap_or_else(|e| {
-                                                error!("Failed to send incoming vote_result to receiver: {:?}", e)
+                                                error!("🚨 Network - Gossipsub | Failed to send incoming vote_result to receiver: {:?}", e)
                                             });
                                     }
                                     Err(e) => {
-                                        warn!("Can't deserialize VoteResult from peer {}: {}", peer_id, e)
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize VoteResult from peer {}: {}", peer_id, e)
                                     }
                                 }
                             }
@@ -1409,11 +1431,11 @@ impl EventLoop {
                                             .send(Event::InboundNodeHealth { node_healths })
                                             .await
                                             .unwrap_or_else(|e| {
-                                                error!("Failed to send incoming node_health to receiver: {:?}", e)
+                                                error!("🚨 Network - Gossipsub | Failed to send incoming node_health to receiver: {:?}", e)
                                             });
                                     }
                                     Err(e) => {
-                                        warn!("Can't deserialize NodeHealth from peer {}: {}", peer_id, e)
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize NodeHealth from peer {}: {}", peer_id, e)
                                     }
                                 }
                             }
@@ -1426,13 +1448,13 @@ impl EventLoop {
                                             .await
                                             .unwrap_or_else(|e| {
                                                 error!(
-                                                    "Failed to send incoming aggregated_node_health to receiver: {:?}",
+                                                    "🚨 Network - Gossipsub | Failed to send incoming aggregated_node_health to receiver: {:?}",
                                                     e
                                                 )
                                             });
                                     }
                                     Err(e) => {
-                                        warn!("Can't deserialize Aggregated NodeHealth from peer {}: {}", peer_id, e)
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize Aggregated NodeHealth from peer {}: {}", peer_id, e)
                                     }
                                 }
                             }
@@ -1440,80 +1462,77 @@ impl EventLoop {
                                 match deserialize_from_versioned_message::<NodeDetailedStatus>(&message.data) {
 								
                                     Ok(node_detailed_status) => {
-										log::debug!("ID: NODE_DETAILED_STATUS, gossipsub::Event::Message ~ Received node detailed status from peer: {:?}, node_detailed_status: {:?}", peer_id, node_detailed_status.clone());
+										debug!("🔍 Network - Gossipsub | Received node detailed status from peer: {:?}, node_detailed_status: {:?}", peer_id, node_detailed_status.clone());
                                         let _ = self
                                             .event_sender
                                             .send(Event::InboundNodeDetailedStatus(node_detailed_status))
                                             .await
                                             .unwrap_or_else(|e| {
-                                                error!("ID: NODE_DETAILED_STATUS, gossipsub::Event::Message ~ Failed to send incoming node detailed status to receiver: {:?}", e)
+                                                error!("🚨 Network - Gossipsub | Failed to send incoming node detailed status to receiver: {:?}", e)
                                             });
                                     }
 									Err(e) => {
-										warn!("ID: NODE_DETAILED_STATUS, gossipsub::Event::Message ~ Can't deserialize NodeDetailedStatus from peer {}: {}", peer_id, e)
+										warn!("⚠️ Network - Gossipsub | Can't deserialize NodeDetailedStatus from peer {}: {}", peer_id, e)
 									}
 								}
                             }
                             _ => {
                                 warn!(
-                                    "Topic {} not supported. Shouldn't recieve an unknown or un-subscribed from topic.",
+                                    "⚠️ Network - Gossipsub | Topic {} not supported. Shouldn't recieve an unknown or un-subscribed from topic.",
                                     message.topic.as_str()
                                 );
                             }
                         }
-                        debug!(
-                            "New p2p message received: '{}' with id: {id} from peer: {peer_id}",
-                            String::from_utf8_lossy(&message.data),
-                        )
+                        debug!("🔍 Network - Gossipsub | New p2p message received with id: {id} from peer: {peer_id}")
                     }
-                    _ => info!("Some Gossipsub event received: {event:?}"),
+                    _ => info!("🏥 Network - Gossipsub | Some Gossipsub event received: {event:?}"),
                 },
                 BehaviourEvent::AutoNat(event) => match event {
                     autonat::Event::InboundProbe(inbound_event) => match inbound_event {
                         autonat::InboundProbeEvent::Error { peer, error, .. } => {
-                            debug!("AutoNAT Inbound Probe failed with Peer: {}. Error: {:#?}.", peer, error);
+                            debug!("🔍 Network - AutoNAT | Inbound Probe failed with Peer: {}. Error: {:#?}.", peer, error);
                         }
                         _ => {
-                            log::trace!("AutoNAT Inbound Probe: {:#?}", inbound_event);
+                            log::trace!("🔍 Network - AutoNAT | Inbound Probe: {:#?}", inbound_event);
                         }
                     },
                     autonat::Event::OutboundProbe(outbound_event) => match outbound_event {
                         autonat::OutboundProbeEvent::Error { peer, error, .. } => {
                             debug!(
-                                "AutoNAT Outbound Probe failed with Peer: {:#?}. Error: {:#?}",
+                                "🔍 Network - AutoNAT | Outbound Probe failed with Peer: {:#?}. Error: {:#?}",
                                 peer, error
                             );
                         }
                         _ => {
-                            log::trace!("AutoNAT Outbound Probe: {:#?}", outbound_event);
+                            log::trace!("🔍 Network - AutoNAT | Outbound Probe: {:#?}", outbound_event);
                         }
                     },
                     autonat::Event::StatusChanged { old, new } => {
-                        debug!("AutoNAT Old status: {:#?}. AutoNAT New status: {:#?}", old, new);
+                        debug!("🔍 Network - AutoNAT | Old status: {:#?}. AutoNAT New status: {:#?}", old, new);
                         let local_peer_id = self.swarm.local_peer_id().clone();
                         let behaviour = self.swarm.behaviour_mut();
                         match new {
                             autonat::NatStatus::Public(addr) => {
                                 // Log the discovery of a new public address
-                                info!("Discovered public address: {}", addr);
+                                info!("🏥 Network - AutoNAT | Discovered public address: {}", addr);
                                 behaviour.kademlia.add_address(&local_peer_id, addr.clone());
                                 // Share public address with other nodes
                                 behaviour.kademlia.get_closest_peers(local_peer_id);
-                                info!("Added public address {} for peer {}", addr, local_peer_id);
+                                info!("🏥 Network - AutoNAT | Added public address {} for peer {}", addr, local_peer_id);
                             }
                             autonat::NatStatus::Private => {
                                 if let Some(addr) = match old {
                                     autonat::NatStatus::Public(addr) => Some(addr),
                                     _ => None,
                                 } {
-                                    warn!("Peer changed to private or unknown address");
+                                    warn!("⚠️ Network - AutoNAT | Peer changed to private or unknown address");
                                     // Remove peer from the routing table and address_peers
                                     behaviour.kademlia.remove_address(&local_peer_id, &addr);
-                                    info!("Removed address {} for peer {}", addr, local_peer_id);
+                                    info!("🏥 Network - AutoNAT | Removed address {} for peer {}", addr, local_peer_id);
                                 }
                             }
                             autonat::NatStatus::Unknown => {
-                                info!("Peer address is unknown")
+                                info!("🏥 Network - AutoNAT | Peer address is unknown")
                             }
                         }
                     }
@@ -1524,14 +1543,14 @@ impl EventLoop {
                         message,
                     } => match message {
                         request_response::Message::Request { request, channel, .. } => {
-                            log::debug!("Received request: {:?} from channel: {:?}", request, channel);
+                            debug!("🔍 Network - Request Response | Received request: {:?} from channel: {:?}", request, channel);
                             match request {
                                 L1xRequest::QueryBlock(request) => self
                                     .event_sender
                                     .send(Event::InboundQueryBlockRequest { request, channel })
                                     .await
                                     .unwrap_or_else(|e| {
-                                        error!("Failed to send incoming query block request to receiver: {:?}", e)
+                                        error!("🚨 Network - Request Response | Failed to send incoming query block request to receiver: {:?}", e)
                                     }),
                                 L1xRequest::QueryNodeStatus(request_time) => {
                                     let local_peer_id = self.swarm.local_peer_id().clone();
@@ -1542,13 +1561,13 @@ impl EventLoop {
                                         .request_response
                                         .send_response(channel, response)
                                         .unwrap_or_else(|e| {
-                                            error!("Failed to send query status response to receiver: {:?}", e)
+                                            error!("🚨 Network - Request Response | Failed to send query status response to receiver: {:?}", e)
                                         });
                                 }
                             }
                         }
                         request_response::Message::Response { response, .. } => {
-                            log::debug!("Received response: {:?}", response);
+                            debug!("🔍 Network - Request Response | Received response: {:?}", response);
                             match response {
                                 L1xResponse::QueryBlock {
                                     block_payload,
@@ -1563,21 +1582,21 @@ impl EventLoop {
                                     })
                                     .await
                                     .unwrap_or_else(|e| {
-                                        error!("Failed to send incoming query block response to receiver: {:?}", e)
+                                        error!("🚨 Network - Request Response | Failed to send incoming query block response to receiver: {:?}", e)
                                     }),
                                 L1xResponse::QueryBlockError(error_message) => {
-                                    log::warn!("Query block error: {:?}", error_message);
+                                    warn!("⚠️ Network - Request Response | Query block error: {:?}", error_message);
                                 }
 
                                 L1xResponse::QueryNodeStatus(_, request_time) => {
                                     let peer_id = sender_peer.to_string(); // Use the actual sender peer id
-                                    log::debug!(
-                                        "Received L1xResponse::QueryNodeStatus response from peer: {:?}",
+                                    debug!(
+                                        "🔍 Network - Request Response | Received L1xResponse::QueryNodeStatus response from peer: {:?}",
                                         peer_id
                                     );
                                     if let Ok(current_timestamp) = util::generic::current_timestamp_in_millis() {
                                         let response_time = current_timestamp - request_time;
-                                        log::debug!("Sending Event::PingResult event to event_sender channel, peer_id: {:?}, is_success: {:?}, rtt: {:?}", peer_id, true, response_time as u64);
+                                        debug!("🔍 Network - Request Response | Sending Event::PingResult event to event_sender channel, peer_id: {:?}, is_success: {:?}, rtt: {:?}", peer_id, true, response_time as u64);
                                         self.event_sender
                                             .send(Event::PingResult {
                                                 peer_id,
@@ -1587,26 +1606,26 @@ impl EventLoop {
                                             .await
                                             .unwrap_or_else(|e| {
                                                 error!(
-                                                    "Failed to send incoming query status response to receiver: {:?}",
+                                                    "🚨 Network - Request Response | Failed to send incoming query status response to receiver: {:?}",
                                                     e
                                                 )
                                             })
                                     } else {
-                                        error!("Failed to get current timestamp in L1xResponse")
+                                        error!("🚨 Network - Request Response | Failed to get current timestamp in L1xResponse")
                                     }
                                 } // Add other response types
 
 								L1xResponse::QueryNodeDetailedStatus(node_detailed_status) => {
 									let peer_id = sender_peer.to_string(); // Use the actual sender peer id
-									log::debug!(
-										"Received L1xResponse::QueryNodeDetailedStatus response from peer: {:?}",
+									debug!(
+										"🔍 Network - Request Response | Received L1xResponse::QueryNodeDetailedStatus response from peer: {:?}",
 										peer_id
 									);
 									self.event_sender
 										.send(Event::InboundNodeDetailedStatus(node_detailed_status))
 										.await
 										.unwrap_or_else(|e| {
-											error!("Failed to send incoming node detailed status to receiver: {:?}", e)
+											error!("🚨 Network - Request Response | Failed to send incoming node detailed status to receiver: {:?}", e)
 										});
 								}
                             }
@@ -1615,13 +1634,13 @@ impl EventLoop {
                     _ => {}
                 },
             },
-            e => warn!("Behaviour: {e:?}"),
+            e => warn!("⚠️ Network - Behaviour | Behaviour: {e:?}"),
         }
     }
 
     /// Given a vallid `Command`, execute the proper underlying libp2p calls
     async fn handle_command(&mut self, command: Command) {
-        debug!("MADE IT TO HANDLE_COMMAND()");
+        debug!("🔍 Network - Command | Handling command: {:?}", command);
         match command {
             Command::StartListening { addr, sender } => {
                 let _ = match self.swarm.listen_on(addr) {
@@ -1661,7 +1680,7 @@ impl EventLoop {
                     .publish(gossipsub::IdentTopic::new(NODE_INFO_TOPIC), tx_bytes)
                 {
                     Ok(msg_id) => {
-                        info!("NodeInfo MESSAGE PUBLISHED SUCCESSFULLY");
+                        info!("🏥 Network - Gossipsub | Broadcast Node Info");
                         let _ = sender.send(Ok(msg_id));
                     }
                     Err(e) => {
@@ -1670,7 +1689,7 @@ impl EventLoop {
                     }
                 },
                 Err(e) => {
-                    error!("FAILED TO SERIALIZE TRANSACTION TO BYTES");
+                    error!("🚨 Network - Gossipsub | Failed to serialize NodeInfo to bytes");
                     let _ = sender.send(Err(e.into()));
                 }
             },
@@ -1683,7 +1702,7 @@ impl EventLoop {
                         .publish(gossipsub::IdentTopic::new(TRANSACTIONS_TOPIC), tx_bytes)
                     {
                         Ok(msg_id) => {
-                            info!("TRANSACTION PUBLISHED SUCCESSFULLY");
+                            info!("🏥 Network - Gossipsub | Broadcast Transaction");
                             let _ = sender.send(Ok(msg_id));
                         }
                         Err(e) => {
@@ -1692,7 +1711,7 @@ impl EventLoop {
                         }
                     },
                     Err(e) => {
-                        error!("FAILED TO SERIALIZE TRANSACTION TO BYTES");
+                        error!("🚨 Network - Gossipsub | Failed to serialize Transaction to bytes");
                         let _ = sender.send(Err(e.into()));
                     }
                 }
@@ -1706,7 +1725,7 @@ impl EventLoop {
                         .publish(gossipsub::IdentTopic::new(BLOCKS_VALIDATE_TOPIC), block_bytes)
                     {
                         Ok(msg_id) => {
-                            info!("VALIDATE BLOCK PUBLISHED SUCCESSFULLY");
+                            info!("🏥 Network - Gossipsub | Broadcast Validate Block");
                             let _ = sender.send(Ok(msg_id));
                         }
                         Err(e) => {
@@ -1715,7 +1734,7 @@ impl EventLoop {
                         }
                     },
                     Err(e) => {
-                        error!("FAILED TO SERIALIZE BLOCK TO BYTES");
+                        error!("🚨 Network - Gossipsub | Failed to serialize Block to bytes");
                         let _ = sender.send(Err(e.into()));
                     }
                 }
@@ -1730,7 +1749,7 @@ impl EventLoop {
                         cluster_block_proposers_bytes,
                     ) {
                         Ok(msg_id) => {
-                            info!("BLOCK PROPOSER PUBLISHED SUCCESSFULLY");
+                            info!("🏥 Network - Gossipsub | Broadcast Block Proposer");
                             let _ = sender.send(Ok(msg_id));
                         }
                         Err(e) => {
@@ -1740,11 +1759,11 @@ impl EventLoop {
                     }
                 }
                 Err(e) => {
-                    error!("FAILED TO SERIALIZE BLOCK PROPOSER TO BYTES");
+                    error!("🚨 Network - Gossipsub | Failed to serialize Block Proposer to bytes");
                     let _ = sender.send(Err(e.into()));
                 }
             },
-            Command::BroadcastVote { vote, sender } => match serialize_as_versioned_message(vote) {
+            Command::BroadcastVote { vote, sender } => match serialize_as_versioned_message(vote.clone()) {
                 Ok(cluster_vote_bytes) => {
                     match self
                         .swarm
@@ -1753,7 +1772,7 @@ impl EventLoop {
                         .publish(gossipsub::IdentTopic::new(VOTE_TOPIC), cluster_vote_bytes)
                     {
                         Ok(msg_id) => {
-                            info!("VOTE PUBLISHED SUCCESSFULLY");
+                            info!("🏥 Network - Gossipsub | Broadcasting Vote for Block: {}", vote.clone().data.block_number);
                             let _ = sender.send(Ok(msg_id));
                         }
                         Err(e) => {
@@ -1763,7 +1782,7 @@ impl EventLoop {
                     }
                 }
                 Err(e) => {
-                    error!("FAILED TO SERIALIZE VOTE TO BYTES");
+                    error!("🚨 Network - Gossipsub | Failed to serialize Vote to bytes");
                     let _ = sender.send(Err(e.into()));
                 }
             },
@@ -1776,7 +1795,7 @@ impl EventLoop {
                         .publish(gossipsub::IdentTopic::new(VOTE_RESULT_TOPIC), cluster_vote_result_bytes)
                     {
                         Ok(msg_id) => {
-                            info!("VOTE RESULT PUBLISHED SUCCESSFULLY");
+                            info!("🏥 Network - Gossipsub | Broadcast Vote Result");
                             let _ = sender.send(Ok(msg_id));
                         }
                         Err(e) => {
@@ -1786,7 +1805,7 @@ impl EventLoop {
                     }
                 }
                 Err(e) => {
-                    error!("FAILED TO SERIALIZE VOTE RESULT TO BYTES");
+                    error!("🚨 Network - Gossipsub | Failed to serialize Vote Result to bytes");
                     let _ = sender.send(Err(e.into()));
                 }
             },
@@ -1800,7 +1819,7 @@ impl EventLoop {
                             .publish(gossipsub::IdentTopic::new(NODE_HEALTH_TOPIC), healths)
                         {
                             Ok(msg_id) => {
-                                info!("NODE HEALTHS PUBLISHED SUCCESSFULLY");
+                                info!("🏥 Network - Gossipsub | Broadcast Node Health");
                                 let _ = sender.send(Ok(msg_id));
                             }
                             Err(e) => {
@@ -1810,7 +1829,7 @@ impl EventLoop {
                         }
                     }
                     Err(e) => {
-                        error!("FAILED TO SERIALIZE NODE HEALTH TO BYTES");
+                        error!("🚨 Network - Gossipsub | Failed to serialize Node Health to bytes");
                         let _ = sender.send(Err(e.into()));
                     }
                 }
@@ -1851,7 +1870,7 @@ impl EventLoop {
                         .publish(gossipsub::IdentTopic::new(AGGREGATED_NODE_HEALTH_TOPIC), health)
                     {
                         Ok(msg_id) => {
-                            info!("NODE HEALTH PAYLOAD PUBLISHED SUCCESSFULLY");
+                            info!("🏥 Network - Gossipsub | Broadcast Node Health Payload");
                             let _ = sender.send(Ok(msg_id));
                         }
                         Err(e) => {
@@ -1861,7 +1880,7 @@ impl EventLoop {
                     }
                 }
                 Err(e) => {
-                    error!("FAILED TO SERIALIZE NODE HEALTH PAYLOAD TO BYTES");
+                    error!("🚨 Network - Gossipsub | Failed to serialize Node Health Payload to bytes");
                     let _ = sender.send(Err(e.into()));
                 }
             },
@@ -1872,7 +1891,7 @@ impl EventLoop {
                         let _ = sender.send(Ok(()));
                     }
                     Err(e) => {
-                        error!("Failed to subscribe to topic {topic_string:?}: {e:?}");
+                        error!("🚨 Network - Gossipsub | Failed to subscribe to topic {topic_string:?}: {e:?}");
                         let _ = sender.send(Err(Box::new(e)));
                     }
                 }
@@ -1884,7 +1903,7 @@ impl EventLoop {
                         let _ = sender.send(Ok(()));
                     }
                     Err(e) => {
-                        error!("Failed to unsubscribe from topic {topic_string:?}: {e:?}");
+                        error!("🚨 Network - Gossipsub | Failed to unsubscribe from topic {topic_string:?}: {e:?}");
                         let _ = sender.send(Err(Box::new(e)));
                     }
                 }
@@ -1906,7 +1925,7 @@ impl EventLoop {
                     let _ = sender.send(Ok(()));
                 }
                 Err(e) => {
-                    error!("Failed to send response for request-response protocol{:?}", e);
+                    error!("🚨 Network - Request Response | Failed to send response for request-response protocol{:?}", e);
                     let _ = sender.send(Err(Box::new(io::Error::new(
                         io::ErrorKind::Other,
                         "Send response error",
@@ -1925,7 +1944,7 @@ impl EventLoop {
 				node_detailed_status,
 				sender,
 			} => {
-				debug!("ID: NODE_DETAILED_STATUS, Command::QueryStatusRequest ~ Broadcasting node detailed status to network: {:?}", node_detailed_status);
+				debug!("🔍 Network - Command | Broadcasting node detailed status to network: {:?}", node_detailed_status);
 				match serialize_as_versioned_message(node_detailed_status.clone()) {
                     Ok(node_detailed_status_bytes) => {
                         match self
@@ -1935,7 +1954,7 @@ impl EventLoop {
                             .publish(gossipsub::IdentTopic::new(BROADCAST_NODE_DETAILED_STATUS_TOPIC), node_detailed_status_bytes)
                         {
                             Ok(msg_id) => {
-                                info!("ID: NODE_DETAILED_STATUS, Command::BroadcastNodeDetailedStatus ~ Node detailed status published successfully");
+                                info!("🏥 Network - Gossipsub | Broadcast Node Detailed Status");
                                 let _ = sender.send(Ok(msg_id));
                             }
                             Err(e) => {
@@ -1945,7 +1964,7 @@ impl EventLoop {
                         }
                     }
                     Err(e) => {
-                        error!("ID: NODE_DETAILED_STATUS, Command::BroadcastNodeDetailedStatus ~ Failed to serialize node detailed status to bytes");
+                        error!("🚨 Network - Gossipsub | Failed to serialize Node Detailed Status to bytes");
                         let _ = sender.send(Err(e.into()));
                     }
                 }
@@ -1980,11 +1999,37 @@ impl L1xCodec {
 }
 
 #[derive(Debug, Clone)]
-struct L1xProtocol;
+struct L1xProtocol {
+    eth_chain_id: Option<u64>,
+    cluster_address: Option<String>,
+}
+
+impl L1xProtocol {
+    fn new(eth_chain_id: Option<u64>, cluster_address: Option<String>) -> Self {
+        Self { eth_chain_id, cluster_address }
+    }
+}
 
 impl ProtocolName for L1xProtocol {
     fn protocol_name(&self) -> &[u8] {
-        "/l1x/protocol/1.0.0".as_bytes()
+        static LEGACY_PROTOCOL: &[u8] = b"/l1x/protocol/1.0.0";
+        
+        let protocol = match (self.eth_chain_id, &self.cluster_address) {
+            (Some(eth_chain_id), Some(cluster_address)) => {
+                debug!("🔍 Network - Protocol | Generating protocol name with chain_id: {} and cluster: {}", eth_chain_id, cluster_address);
+                Box::leak(format!("/l1x/{}/{}/protocol/1.0.0", eth_chain_id, cluster_address).into_bytes().into_boxed_slice())
+            }
+            (Some(eth_chain_id), None) => {
+                debug!("🔍 Network - Protocol | Generating protocol name with chain_id: {} (no cluster)", eth_chain_id);
+                Box::leak(format!("/l1x/{}/protocol/1.0.0", eth_chain_id).into_bytes().into_boxed_slice())
+            }
+            _ => {
+                debug!("🔍 Network - Protocol | Using legacy protocol name");
+                LEGACY_PROTOCOL
+            }
+        };
+        debug!("🔍 Network - Protocol | Final protocol name: {}", String::from_utf8_lossy(protocol));
+        protocol
     }
 }
 

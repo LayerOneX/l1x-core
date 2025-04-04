@@ -126,6 +126,7 @@ impl <'a> FullNode {
 		validator_pool_address: Address,
 		node_type: &NodeType,
 		initial_epoch_config: Option<InitialEpochConfig>,
+		eth_chain_id: Option<u64>,
 	) -> (FullNode, mpsc::Receiver<ResponseMempool>) {
 		let server_info = format!(r#"
         _     __        _   _           _
@@ -158,47 +159,47 @@ impl <'a> FullNode {
 			true => "Enabled",
 			false => "Disabled",
 		};
-		info!("\n| DEV MODE: {}        |\n| MULTINODE MODE: {} |\n", dev_mode_enabled, multinode_mode_enabled);
+		info!("ℹ️ \n| 🛠️ DEV MODE: {}        |\n| 🌐 MULTINODE MODE: {} |\n", dev_mode_enabled, multinode_mode_enabled);
+
 
 		let node_private_key = match node_priv_key.clone() {
 			Some(node_private_key) => node_private_key,
 			None => {
-				println!("An error occurred, node_private_key not found");
+				error!("🚨 Node - Security | Private Key not found");
 				panic!()
 			},
 		};
 		let secret_key = SecretKey::from_slice(
-			&hex::decode(&node_private_key).expect("Error decoding node_private_key"),
+			&hex::decode(&node_private_key).expect("🚨 Node - Security | Error decoding node_private_key"),
 		)
-		.expect("Failed to parse provided private_key");
+		.expect("🚨 Node - Security | Failed to parse provided private_key");
 		let secp = Secp256k1::new();
 		let verifying_key = secret_key.public_key(&secp);
 		let verifying_key_bytes = verifying_key.serialize().to_vec();
 		let node_address =
-			Account::address(&verifying_key_bytes).expect("Failed to get node address");
+			Account::address(&verifying_key_bytes).expect("🚨 Node - Security | Failed to get node address");
 
-		debug!("Verifying key: {:?}", hex::encode(&verifying_key_bytes));
-		info!("NODE ADDRESS: 0x{}", hex::encode(node_address));
+		info!("🔍 Node - Security | Address: 0x{}, Verifying key: {:?}", hex::encode(node_address), hex::encode(&verifying_key_bytes));
 
 		let node_keypair =  {
 				let mut keypair_bytes =
-					hex::decode(&node_private_key).expect("Failed to hex decode privkey");
+					hex::decode(&node_private_key).expect("🚨 Node - Security | Failed to hex decode privkey");
 				let secret_key =
 					libp2p::identity::secp256k1::SecretKey::try_from_bytes(&mut keypair_bytes)
-						.expect("Failed to parse keypair");
+						.expect("🚨 Node - Security | Failed to parse keypair");
 
 				// Create a new Keypair using the secp256k1::Keypair constructor
 				let secp_keypair = libp2p::identity::secp256k1::Keypair::from(secret_key);
 
 				// Use try_into_secp256k1 from libp2p_identity to convert to Keypair
 				let keypair: libp2p::identity::Keypair =
-					secp_keypair.try_into().expect("Failed to convert to Keypair");
+					secp_keypair.try_into().expect("🚨 Node - Security | Failed to convert to Keypair");
 
 				keypair
 			};
 		// initialize database
 		let db_pool_conn =
-			Database::get_pool_connection().await.expect("unable to get db_pool_conn");
+			Database::get_pool_connection().await.expect("🚨 Node - Database | Unable to get db_pool_conn");
 
 		let (mempool_res_tx, mempool_res_rx) = mpsc::channel(1000);
 		let (mempool_tx, mempool_rx) = mpsc::channel(1000);
@@ -218,25 +219,25 @@ impl <'a> FullNode {
 		let dht_health_storage = DHTHealthStorage::new();
 		let node_info_state = NodeInfoState::new(&db_pool_conn)
 			.await
-			.expect("Unable to get node info state");
+			.expect("🚨 Node - Database | Unable to get node info state");
 		let block_manager = BlockManager{};
-		let block_state = BlockState::new(&db_pool_conn).await.expect("failed to load block state");
+		let block_state = BlockState::new(&db_pool_conn).await.expect("🚨 Node - Database | failed to load block state");
 
 		if *node_type == NodeType::Full {
-			info!("Starting full node");
+			info!("🚀 Node - Starting full node");
 			let (mut network_client, event_receiver, event_loop) =
-				network::new(node_keypair.clone(), bootnodes, dht_health_storage, autonat_config)
+				network::new(node_keypair.clone(), bootnodes, dht_health_storage, autonat_config, eth_chain_id, Some(hex::encode(cluster_address.clone())))
 					.await
-					.expect("Network to be created");
+					.expect("🚨 Node - Network | Network to be created");
 
 			// Spawn the networking event loop
 			tokio::spawn(event_loop.run());
 
 			// Start listening
 			network_client
-				.start_listening(node_ip_address.parse().expect("Address parses correctly"))
+				.start_listening(node_ip_address.parse().expect("🚨 Node - Network | Address parses correctly"))
 				.await
-				.expect("Listening not to fail");
+				.expect("🚨 Node - Network | Listening not to fail");
 
 			// Start the node listening for supported events from the networking code for the node to
 			// handle
@@ -254,8 +255,8 @@ impl <'a> FullNode {
 			task::spawn(Self::node_event_receiver_process(node_event_tx.clone()));
 
 			match try_initialize_runtime_configs(cluster_address).await {
-				Ok(_) => info!("Runtime configs initialized, attempt 1"),
-				Err(e) => error!("Failed to initialize runtime config in attempt 1: {}", e),
+				Ok(_) => info!("🔍 Node - Runtime | Configs initialized, attempt 1"),
+				Err(e) => error!("🚨 Node - Runtime | Failed to initialize runtime config in attempt 1: {}", e),
 			}
 
 			// Only sync when in multinode mode
@@ -263,27 +264,27 @@ impl <'a> FullNode {
 				let sync_start_time = Instant::now();
 				match sync_node(cluster_address, bootnodes, event_tx.clone(), 500).await {
 					Ok(_) => {
-						info!("✅ Syncing node successful ✅");
+						info!("🔍 Node - Syncing | Node synced successfully ✅");
 						info!(
 						"⌛️ Syncing node took: {:?} seconds",
 						sync_start_time.elapsed().as_secs()
 					);
 					},
 					Err(e) => {
-						panic!("Unable to sync node: {:?}", e);
+						panic!("🚨 Node - Syncing | Unable to sync node: {:?}", e);
 					},
 				}
 
 				// Update node info
 				match update_node_info(bootnodes).await {
-					Ok(_) => info!("✅ Node info sync successful"),
-					Err(e) => error!("Unable to sync node info: {:?}", e),
+					Ok(_) => info!("🔍 Node - Syncing | Node info sync successful ✅"),
+					Err(e) => error!("🚨 Node - Syncing | Unable to sync node info: {:?}", e),
 				}
 
 				// Update genesis block
 				match update_genesis_block(bootnodes).await {
-					Ok(_) => info!("Genesis block updated successfully"),
-					Err(e) => warn!("Failed to update genesis block: {:?}", e),
+					Ok(_) => info!("🔍 Node - Syncing | Genesis block updated successfully ✅"),
+					Err(e) => warn!("🚨 Node - Syncing | Failed to update genesis block: {:?}", e),
 				}
 
 				// add sleep
@@ -292,31 +293,31 @@ impl <'a> FullNode {
 
 				// Sometimes few last blocks are missed:
 				// they are not synced on the prevoius step and not cached by p2p
-				info!("Sync node one more time");
+				info!("🔍 Node - Syncing | Sync node one more time");
 				let sync_start_time = Instant::now();
 				match sync_node(cluster_address, bootnodes, event_tx.clone(), 500).await {
 					Ok(_) => {
-						info!("✅ Syncing node successful ✅");
+						info!("🔍 Node - Syncing | Syncing node successful ✅");
 						info!(
-						"⌛️ Syncing node took: {:?} seconds",
+						"🕒 Node - Syncing | Syncing node took: {:?} seconds",
 						sync_start_time.elapsed().as_secs()
 					);
 					},
 					Err(e) => {
-						panic!("Unable to sync node: {:?}", e);
+						panic!("🚨 Node - Syncing | Unable to sync node: {:?}", e);
 					},
 				}
 
 				// Initialize runtime configs, one more time to make sure it's initialized
 				match try_initialize_runtime_configs(cluster_address).await {
-					Ok(_) => info!("Runtime configs initialized, attempt 2"),
-					Err(e) => error!("Failed to initialize runtime config in attempt 2: {}", e),
+					Ok(_) => info!("🔍 Node - Runtime | Configs initialized, attempt 2"),
+					Err(e) => error!("🚨 Node - Runtime | Failed to initialize runtime config in attempt 2: {}", e),
 				}
 			}
 
-			let current_block_height = block_state.block_head_header(cluster_address).await.expect("failed to get block height").block_number;
-			let current_epoch = block_manager.calculate_current_epoch(current_block_height).expect("failed to current calculate epoch") as u64;
-			let maybe_new_epoch = block_manager.calculate_current_epoch(current_block_height + 1).expect("failed to current calculate epoch") as u64;
+			let current_block_height = block_state.block_head_header(cluster_address).await.expect("🚨 Node - Database | failed to get block height").block_number;
+			let current_epoch = block_manager.calculate_current_epoch(current_block_height).expect("🚨 Node - Database | failed to current calculate epoch") as u64;
+			let maybe_new_epoch = block_manager.calculate_current_epoch(current_block_height + 1).expect("🚨 Node - Database | failed to current calculate epoch") as u64;
 			let latest_epoch = current_epoch.max(maybe_new_epoch);
 
 			// Load node info and create new if not exist.
@@ -326,10 +327,10 @@ impl <'a> FullNode {
 					updated_node_info.peer_id = peer_id.to_string();
 					match node_info_state.update_node_info(&node_info).await {
 						Ok(_) => {
-							info!("Node info updated");
+							info!("🔍 Node - Database | Node info updated");
 						}
 						Err(e) => {
-							warn!("failed to update node info because of {}", e);
+							warn!("🚨 Node - Database | failed to update node info because of {}", e);
 						}
 					};
 					updated_node_info
@@ -345,7 +346,7 @@ impl <'a> FullNode {
 
 				let signature = node_info_payload
 					.sign_with_ecdsa(secret_key)
-					.expect("Unable to sign node_info_payload");
+					.expect("🚨 Node - Database | Unable to sign node_info_payload");
 
 				let node_info = NodeInfo::new(
 					node_address.clone(),
@@ -360,10 +361,10 @@ impl <'a> FullNode {
 
 				match node_info_state.store_node_info(&node_info).await {
 					Ok(_) => {
-						info!("Stored node info");
+						info!("🔍 Node - Database | Stored node info");
 					}
 					Err(e) => {
-						warn!("failed to store node info because of {}", e);
+						warn!("🚨 Node - Database | failed to store node info because of {}", e);
 					}
 				};
 				node_info
@@ -447,40 +448,40 @@ impl <'a> FullNode {
 					if latest_epoch == 0 {
 						// setting bootnode as initial block proposer
 						let initial_block_proposer_address = initial_epoch_config
-							.expect("Initial epoch config not provided")
+							.expect("🚨 Node - Database | Initial epoch config not provided")
 							.block_proposer
 							.as_ref()
-							.map(|proposer| hex::decode(proposer).expect("Unable to decode initial_block_proposer string"))
+							.map(|proposer| hex::decode(proposer).expect("🚨 Node - Database | Unable to decode initial_block_proposer string"))
 							.and_then(|bytes| bytes.try_into().ok())
-							.expect("Initial block proposer not provided or wrong length of Vec");
+							.expect("🚨 Node - Database | Initial block proposer not provided or wrong length of Vec");
 
 						set_initial_block_proposer(cluster_address, initial_block_proposer_address, &db_pool_conn, current_epoch).await;
 					} else {
 						// Update node health for current epoch
 						update_node_healths(bootnodes, current_epoch)
 							.await
-							.unwrap_or_else(|err| panic!("Unable to sync node health for epoch {}: {:?}", current_epoch, err));
+							.unwrap_or_else(|err| panic!("🚨 Node - Syncing | Unable to sync node health for epoch {}: {:?}", current_epoch, err));
 
-						info!("✅ Node health sync successful");
+						info!("🔍 Node - Syncing | Node health sync successful ✅");
 						// Update block_proposer and validators for current epoch
 						update_block_proposer_and_validator(bootnodes, latest_epoch, cluster_address)
 							.await
-							.unwrap_or_else(|err| panic!("Unable to sync Block proposer and validators for epoch {}: {:?}", latest_epoch, err));
-						info!("✅ Block proposer and validators sync successful");
+							.unwrap_or_else(|err| panic!("🚨 Node - Syncing | Unable to sync Block proposer and validators for epoch {}: {:?}", latest_epoch, err));
+						info!("🔍 Node - Syncing | Block proposer and validators sync successful ✅");
 					}
 				} else {
 					block_state
 						.store_genesis_block_time(current_block_height, latest_epoch)
 						.await
-						.expect("failed to store genesis block");
+						.expect("🚨 Node - Database | failed to store genesis block");
 
 					// setting bootnode as initial block proposer
 					let block_proposer_state = BlockProposerState::new(&db_pool_conn)
 						.await
-						.expect("failed to get block_proposer_state");
+						.expect("🚨 Node - Database | failed to get block_proposer_state");
 					block_proposer_state.upsert_block_proposer(cluster_address, latest_epoch, node_address)
 						.await
-						.expect("failed to set initial block proposer");
+						.expect("🚨 Node - Database | failed to set initial block proposer");
 				}
 
 				// Give time for the node to connect to a peer before broadcasting its node info
@@ -495,18 +496,18 @@ impl <'a> FullNode {
 					cluster_address.clone(),
 					latest_epoch,
 					peer_id.clone(),
-				).await.expect("Failed to start node health monitoring");
+				).await.expect("🚨 Node - Network | Failed to start node health monitoring");
 
 			
 			}
 
 			(full_node, mempool_res_rx)
 		} else {
-			info!("Starting archive node");
-			info!("Try to initialize runtime configs");
+			info!("🔍 Node - Starting archive node 📦");
+			info!("🔍 Node - Try to initialize runtime configs");
 			match try_initialize_runtime_configs(cluster_address).await {
-				Ok(_) => info!("Runtime configs initialized"),
-				Err(e) => error!("Failed to initialize runtime configs: {}", e),
+				Ok(_) => info!("🔍 Node - Runtime | Runtime configs initialized"),
+				Err(e) => error!("🚨 Node - Runtime | Failed to initialize runtime configs: {}", e),
 			}
 
 			
@@ -545,14 +546,14 @@ impl <'a> FullNode {
 				Ok(event) => {
 					// publish to WS event topic
 					info!(
-						"Received EVM event: {event:?}",
+						"🔍 Node - EVM | Received EVM event: {event:?}",
 						/* serde_json::from_slice::<Value>(&event)
 						 * .map(|x| x.to_string())
 						 * .unwrap_or_else(|_| format!("Unserializable event: {event:?}")) */
 					);
 				},
 				Err(e) => {
-					warn!("Unable to read event from event_tx channel: {:?}", e);
+					warn!("🚨 Node - EVM | Unable to read event from event_tx channel: {:?}", e);
 				},
 			}
 		}
@@ -567,14 +568,14 @@ impl <'a> FullNode {
 				Ok(event) => {
 					// publish to WS event topic
 					info!(
-						"Received node event: {}",
+						"🔍 Node - Event | Received node event: {}",
 						serde_json::from_slice::<Value>(&event)
 							.map(|x| x.to_string())
-							.unwrap_or_else(|_| format!("Unserializable event: {event:?}"))
+							.unwrap_or_else(|_| format!("🚨 Node - Event | Unserializable event: {event:?}"))
 					);
 				},
 				Err(e) => {
-					warn!("Unable to read event from event_tx channel: {:?}", e);
+					warn!("🚨 Node - Event | Unable to read event from event_tx channel: {:?}", e);
 				},
 			}
 		}
@@ -587,7 +588,7 @@ impl <'a> FullNode {
 		mempool_tx: mpsc::Sender<ProcessMempool>,
 		network_receive_tx: mpsc::Sender<NetworkMessage>,
 	) {
-		debug!("🔥🔥🔥event_receiver_process started");
+		debug!("🔍 Node - Event | Event receiver process started");
 		// Handle incoming network events
 		loop {
 			match event_receiver.recv().await {
@@ -596,10 +597,10 @@ impl <'a> FullNode {
 						// A transaction has just been received from another node in the network.
 						// Add it to this nodes mempool if it is valid.
 						Event::InboundTransaction { transaction } => {
-							info!("📨 I just received a new TX from the network");
+							info!("🔍 Node - Event | I just received a new TX from the network 📨");
 							if let Err(e) =
 								mempool_add_transaction(mempool_tx.clone(), transaction).await	{
-								warn!("Unable to write transaction to mempool channel: {:?}", e)
+								warn!("🚨 Node - Event | Unable to write transaction to mempool channel: {:?}", e)
 							}
 						},
 						Event::InboundNodeInfo { node_info } => {
@@ -608,7 +609,7 @@ impl <'a> FullNode {
 								.await
 							{
 								warn!(
-									"Unable to write node_info to network_receive_tx channel: {:?}",
+									"🚨 Node - Event | Unable to write node_info to network_receive_tx channel: {:?}",
 									e
 								)
 							}
@@ -618,7 +619,7 @@ impl <'a> FullNode {
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::ReceiveValidateBlock(block_payload)))
 								.await
 							{
-								warn!("Unable to write block_payload to network_receive_tx channel: {:?}", e)
+								warn!("🚨 Node - Event | Unable to write block_payload to network_receive_tx channel: {:?}", e)
 							}
 						},
 						Event::InboundBlockProposer { block_proposer_payload } => {
@@ -626,14 +627,14 @@ impl <'a> FullNode {
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::ReceiveBlockProposer(block_proposer_payload)))
 								.await
 							{
-								warn!("Unable to write block_payload to network_receive_tx channel: {:?}", e)
+								warn!("🚨 Node - Event | Unable to write block_payload to network_receive_tx channel: {:?}", e)
 							}
 						},
 						Event::InboundVote { vote } => {
 							if let Err(e) =
 								network_receive_tx.send(NetworkMessage::NetworkEvent(NetworkEventType::ReceiveVote(vote))).await
 							{
-								warn!("Unable to write vote to network_receive_tx channel: {:?}", e)
+								warn!("🚨 Node - Event | Unable to write vote to network_receive_tx channel: {:?}", e)
 							}
 						},
 						Event::InboundVoteResult { vote_result } => {
@@ -641,7 +642,7 @@ impl <'a> FullNode {
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::ReceiveVoteResult(vote_result)))
 								.await
 							{
-								warn!("Unable to write vote_result to network_receive_tx channel: {:?}", e)
+								warn!("🚨 Node - Event | Unable to write vote_result to network_receive_tx channel: {:?}", e)
 							}
 						},
 
@@ -650,7 +651,7 @@ impl <'a> FullNode {
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::ReceiveQueryBlockResponse(block_payload, vote_result)))
 								.await
 							{
-								warn!("Unable to write response to network_receive_tx channel: {:?}", e)
+								warn!("🚨 Node - Event | Unable to write response to network_receive_tx channel: {:?}", e)
 							}
 						},
 						Event::InboundQueryBlockRequest { request, channel } => {
@@ -658,7 +659,7 @@ impl <'a> FullNode {
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::ReceiveQueryBlockRequest(request, channel)))
 								.await
 							{
-								warn!("Unable to write response to network_receive_tx channel: {:?}", e)
+								warn!("🚨 Node - Event | Unable to write response to network_receive_tx channel: {:?}", e)
 							}
 						},
 						Event::ProcessNodeHealth { epoch } => {
@@ -666,7 +667,7 @@ impl <'a> FullNode {
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::ProcessNodeHealth(epoch)))
 								.await
 							{
-								warn!("Unable to send ReceiveNodeHealth event: {:?}", e);
+								warn!("🚨 Node - Event | Unable to send ReceiveNodeHealth event: {:?}", e);
 							}
 						},
 						Event::InboundNodeHealth{node_healths} => {
@@ -674,7 +675,7 @@ impl <'a> FullNode {
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::ReceiveNodeHealth(node_healths)))
 								.await
 							{
-								warn!("Unable to send ReceiveNodeHealth event: {:?}", e);
+								warn!("🚨 Node - Event | Unable to send ReceiveNodeHealth event: {:?}", e);
 							}
 						},
 						Event::InboundAggregatedNodeHealth{aggregated_healths} => {
@@ -682,16 +683,16 @@ impl <'a> FullNode {
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::ReceiveAggregatedNodeHealth(aggregated_healths)))
 								.await
 							{
-								warn!("Unable to send ReceiveAggregatedNodeHealth event: {:?}", e);
+								warn!("🚨 Node - Event | Unable to send ReceiveAggregatedNodeHealth event: {:?}", e);
 							}
 						},
 						Event::AggregateNodeHealth { epoch } => {
-							debug!("Sending Event::AggregateNodeHealth event to network_receive_tx channel, epoch: {}", epoch);
+							debug!("🔍 Node - Event | Sending Event::AggregateNodeHealth event to network_receive_tx channel, epoch: {}", epoch);
 							if let Err(e) = network_receive_tx
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::AggregateNodeHealth(epoch)))
 								.await
 							{
-								warn!("Unable to send Aggregate NodeHealth event: {:?}", e);
+								warn!("🚨 Node - Event | Unable to send Aggregate NodeHealth event: {:?}", e);
 							}
 						},
 						Event::PingResult { peer_id, is_success, rtt } => {
@@ -699,7 +700,7 @@ impl <'a> FullNode {
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::PingResult(peer_id, is_success, rtt)))
 								.await
 							{
-								warn!("Unable to handler ping result event: {:?}", e);
+								warn!("🚨 Node - Event | Unable to handler ping result event: {:?}", e);
 							}
 						},
 						Event::PingEligiblePeers { epoch, peer_ids } => {
@@ -707,7 +708,7 @@ impl <'a> FullNode {
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::PingEligiblePeers(epoch, peer_ids)))
 								.await
 							{
-								warn!("Unable to handler ping result event: {:?}", e);
+								warn!("🚨 Node - Event | Unable to handler ping result event: {:?}", e);
 							}
 						},
 						Event::CheckNodeStatus => {
@@ -715,34 +716,34 @@ impl <'a> FullNode {
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::CheckNodeStatus))
 								.await
 							{
-								warn!("Unable to send check node status event: {:?}", e);
+								warn!("🚨 Node - Event | Unable to send check node status event: {:?}", e);
 							}
 						},
 						Event::InitializePeers => {
-							debug!("Received Event::InitializePeers event");
+							debug!("🔍 Node - Event | Received Event::InitializePeers event");
 						},
 						Event::PublishNodeDetailedStatus { peer_id } => {
 							if let Err(e) = network_receive_tx
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::PublishNodeDetailedStatus(peer_id)))
 								.await
 							{
-								warn!("Unable to write detailed status request to network_receive_tx channel: {:?}", e)
+								warn!("🚨 Node - Event | Unable to write detailed status request to network_receive_tx channel: {:?}", e)
 							}
 						},
 						Event::InboundNodeDetailedStatus(node_detailed_status) => {
-							debug!("ID: NODE_DETAILED_STATUS, Received Event::InboundNodeDetailedStatus event: {:?}", node_detailed_status.clone());
+							debug!("🔍 Node - Event | Received Event::InboundNodeDetailedStatus event: {:?}", node_detailed_status.clone());
 							if let Err(e) = network_receive_tx
 								.send(NetworkMessage::NetworkEvent(NetworkEventType::ReceiveNodeDetailedStatus(node_detailed_status)))
 								.await
 							{
-								warn!("Unable to write detailed status response to network_receive_tx channel: {:?}", e)
+								warn!("🚨 Node - Event | Unable to write detailed status response to network_receive_tx channel: {:?}", e)
 							}
 						}
 					}
 				},
 				// Command channel closed, thus shutting down the network event loop.
 				None => {
-					warn!("event_receiver_process worker exited");
+					warn!("🚨 Node - Event | Event receiver process worker exited");
 					return
 				}
 			}
@@ -758,27 +759,27 @@ impl <'a> FullNode {
 	)
 	{
 
-		info!("Inside block_production_timer: started");
-		info!("Inside block_production_timer: block_time: {}", block_time);
+		debug!("🔍 Node - Block Production | Inside block_production_timer: started, block_time: {}", block_time);
+
 		let mut last_propose_block_time = SystemTime::now()
 			.duration_since(UNIX_EPOCH)
-			.expect("Failed to get system time")
+			.expect("🚨 Node - Block Production | Failed to get system time")
 			.as_millis();
 
 		loop {
 			sleep(Duration::from_millis(1000)).await;
 			let current_time = SystemTime::now()
 				.duration_since(UNIX_EPOCH)
-				.expect("Failed to get system time")
+				.expect("🚨 Node - Block Production | Failed to get system time")
 				.as_millis();
 
 			if (last_propose_block_time + block_time) <= current_time {
 				if let Err(e) = mempool_tx.send(ProcessMempool::ProposeBlockOnBlockTime).await {
-					warn!("Unable to write time to mempool_tx channel: {:?}", e);
+					warn!("🚨 Node - Block Production | Unable to write time to mempool_tx channel: {:?}", e);
 				}
 			} else {
 				if let Err(e) = mempool_tx.send(ProcessMempool::ProposeBlockOnMempoolFull).await {
-					warn!("Unable to write time to mempool_tx channel: {:?}", e);
+					warn!("🚨 Node - Block Production | Unable to write time to mempool_tx channel: {:?}", e);
 				}
 			}
 
@@ -788,7 +789,7 @@ impl <'a> FullNode {
 						last_propose_block_time = propose_block_time;
 					}
 				}
-				None => warn!("timer_rx channel closed"),
+				None => warn!("🚨 Node - Block Production | timer_rx channel closed"),
 			}
 		}
 	}
@@ -803,7 +804,7 @@ impl <'a> FullNode {
 		mut network_receive_tx: mpsc::Sender<NetworkMessage>,
 	){
 		let db_pool_conn =
-			Database::get_pool_connection().await.expect("error getting db_pool_conn");
+			Database::get_pool_connection().await.expect("🚨 Node - Block Production | error getting db_pool_conn");
 
 		while let Some(process_mempool) = mempool_rx.recv().await {
 			match process_mempool {
@@ -814,39 +815,39 @@ impl <'a> FullNode {
 								let tx_hash_string = expired_transaction.transaction_hash()
 									.ok()
 									.and_then(|v| Some(hex::encode(&v)));
-								info!("Expired transaction: tx hash: {:?} & is_eth_tx: {:?}",
+								info!("🔍 Node - Block Production | Expired transaction: tx hash: {:?} & is_eth_tx: {:?}",
 									tx_hash_string,
 									expired_transaction.eth_original_transaction.is_some());
 							}
 						},
-						Err(error) => error!("Error while clearing expired transactions: {:?}", error),
+						Err(error) => error!("🚨 Node - Block Production | Error while clearing expired transactions: {:?}", error),
 					}
 					match mempool.add_transaction(transaction, &db_pool_conn).await {
 						Ok(_) => {
 							if let Err(e) = sender.send(Ok(ResponseMempool::Success)) {
-								error!("Unable to write ResponseMempool to mempool_res_tx channel: {:?}", e);
+								error!("🚨 Node - Block Production | Unable to write ResponseMempool to mempool_res_tx channel: {:?}", e);
 							}
 							if let Err(e) = mempool_res_tx.send(ResponseMempool::Success).await {
-								error!("Unable to write ResponseMempool to mempool_res_tx channel: {:?}", e);
+								error!("🚨 Node - Block Production | Unable to write ResponseMempool to mempool_res_tx channel: {:?}", e);
 							}
 						},
 						Err(e) => {
 							if let Err(e) = sender.send(Ok(ResponseMempool::FailedToAddTransaction)) {
-								error!("Unable to write ResponseMempool to mempool_res_tx channel: {:?}", e);
+								error!("🚨 Node - Block Production | Unable to write ResponseMempool to mempool_res_tx channel: {:?}", e);
 							}
 							if let Err(e) =
 								mempool_res_tx.send(ResponseMempool::FailedToAddTransaction).await
 							{
-								error!("Unable to write ResponseMempool to mempool_res_tx channel: {:?}", e);
+								error!("🚨 Node - Block Production | Unable to write ResponseMempool to mempool_res_tx channel: {:?}", e);
 							}
-							warn!("Unable to add transaction to mempool: {:?}", e);
+							warn!("🚨 Node - Block Production | Unable to add transaction to mempool: {:?}", e);
 						},
 					};
 				},
 				ProcessMempool::RemoveTrasaction(transaction) => {
 					match mempool.remove_transaction(&transaction).await {
 						Ok(_) => (),
-						Err(e) => warn!("Remove trasaction from mempool failed: {e:?}"),
+						Err(e) => warn!("⚠️ Node - Block Production | Remove trasaction from mempool failed: {e:?}"),
 					}
 				},
 				ProcessMempool::ProposeBlockOnMempoolFull => {
@@ -856,15 +857,15 @@ impl <'a> FullNode {
 								let tx_hash_string = expired_transaction.transaction_hash()
 									.ok()
 									.and_then(|v| Some(hex::encode(&v)));
-								info!("Expired transaction: tx hash: {:?} & is_eth_tx: {:?}",
+								info!("🔍 Node - Block Production | Expired transaction: tx hash: {:?} & is_eth_tx: {:?}",
 									tx_hash_string,
 									expired_transaction.eth_original_transaction.is_some());
 							}
 						},
-						Err(error) => error!("Error while clearing expired transactions: {:?}", error),
+						Err(error) => error!("🚨 Node - Block Production | Error while clearing expired transactions: {:?}", error),
 					}
 					if mempool.transactions_priority.len() >= mempool.max_size {
-						info!("NODE => ProposeBlockOnMempoolFull event");
+						info!("🔍 Node - Block Production | ProposeBlockOnMempoolFull event");
 						match mempool.propose_block(&db_pool_conn, secret_key, verifying_key, network_receive_tx.clone()).await {
 							Ok(result) => {
 								match result {
@@ -872,14 +873,14 @@ impl <'a> FullNode {
 										for event in events {
 											if let Err(err) = node_event_tx.send(event) {
 												warn!(
-													"Failed to publish ProposeBlock event due to {:?}",
+													"🚨 Node - Block Production | Failed to publish ProposeBlock event due to {:?}",
 													err
 												);
 											}
 										}
 										let current_timestamp = SystemTime::now()
 											.duration_since(UNIX_EPOCH)
-											.expect("Failed to get system time")
+											.expect("🚨 Node - Block Production | Failed to get system time")
 											.as_millis();
 										if let Err(e) = timer_tx
 											.send(
@@ -887,7 +888,7 @@ impl <'a> FullNode {
 											)
 											.await
 										{
-											error!("Unable to write time to timer_tx channel: {:?}", e)
+											error!("🚨 Node - Block Production | Unable to write time to timer_tx channel: {:?}", e)
 										}
 									},
 									mempool::mempool::ProposeBlockResult::NotProposed => {
@@ -897,14 +898,14 @@ impl <'a> FullNode {
 											)
 											.await
 										{
-											error!("Unable to write time to timer_tx channel: {:?}", e)
+											error!("🚨 Node - Block Production | Unable to write time to timer_tx channel: {:?}", e)
 										}
 									}
 								}
 							},
 							Err(e) => {
 								error!(
-									"Propose block failed on ProposeBlockOnMempoolFull: {:?}",
+									"🚨 Node - Block Production | Propose block failed on ProposeBlockOnMempoolFull: {:?}",
 									e
 								);
 								if let Err(e) = timer_tx
@@ -913,7 +914,7 @@ impl <'a> FullNode {
 									)
 									.await
 								{
-									error!("Unable to write time to timer_tx channel: {:?}", e)
+									error!("🚨 Node - Block Production | Unable to write time to timer_tx channel: {:?}", e)
 								}
 							},
 						};
@@ -924,7 +925,7 @@ impl <'a> FullNode {
 							)
 							.await
 						{
-							error!("Unable to write time to timer_tx channel: {:?}", e)
+							error!("🚨 Node - Block Production | Unable to write time to timer_tx channel: {:?}", e)
 						}
 					}
 				},
@@ -935,12 +936,12 @@ impl <'a> FullNode {
 								let tx_hash_string = expired_transaction.transaction_hash()
 									.ok()
 									.and_then(|v| Some(hex::encode(&v)));
-								info!("Expired transaction: tx hash: {:?} & is_eth_tx: {:?}",
+								info!("🔍 Node - Block Production | Expired transaction: tx hash: {:?} & is_eth_tx: {:?}",
 									tx_hash_string,
 									expired_transaction.eth_original_transaction.is_some());
 							}
 						},
-						Err(error) => error!("Error while clearing expired transactions: {:?}", error),
+						Err(error) => error!("🚨 Node - Block Production | Error while clearing expired transactions: {:?}", error),
 					}
 					match mempool.propose_block(&db_pool_conn, secret_key, verifying_key, network_receive_tx.clone()).await {
 						Ok(result) => {
@@ -948,12 +949,12 @@ impl <'a> FullNode {
 								mempool::mempool::ProposeBlockResult::Proposed(events) => {
 									for event in events {
 										if let Err(err) = node_event_tx.send(event) {
-											warn!("Failed to publish ReceiveBlock event due to {:?}", err);
+											warn!("⚠️ Node - Block Production | Failed to publish ReceiveBlock event due to {:?}", err);
 										}
 									}
 									let current_timestamp = SystemTime::now()
 										.duration_since(UNIX_EPOCH)
-										.expect("Failed to get system time")
+										.expect("🚨 Node - Block Production | Failed to get system time")
 										.as_millis();
 									if let Err(e) = timer_tx
 										.send(
@@ -961,7 +962,7 @@ impl <'a> FullNode {
 										)
 										.await
 									{
-										error!("Unable to write time to timer_tx channel: {:?}", e)
+										error!("🚨 Node - Block Production | Unable to write time to timer_tx channel: {:?}", e)
 									}
 								},
 								mempool::mempool::ProposeBlockResult::NotProposed => {
@@ -971,33 +972,33 @@ impl <'a> FullNode {
 										)
 										.await
 									{
-										error!("Unable to write time to timer_tx channel: {:?}", e)
+										error!("🚨 Node - Block Production | Unable to write time to timer_tx channel: {:?}", e)
 									}
 								}
 							}
 						},
 						Err(e) => {
-							error!("Propose block failed on ProposeBlockOnBlockTime: {:?}", e);
+							error!("🚨 Node - Block Production | Propose block failed on ProposeBlockOnBlockTime: {:?}", e);
 							if let Err(e) = timer_tx
 								.send(
 									ProposeBlockStatus::NotProposed
 								)
 								.await
 							{
-								error!("Unable to write time to timer_tx channel: {:?}", e)
+								error!("🚨 Node - Block Production | Unable to write time to timer_tx channel: {:?}", e)
 							}
 						},
 					};
 				},
 				ProcessMempool::GetSize(sender) => {
 					if let Err(e) = sender.send(mempool.transactions_priority.len()) {
-						error!("Unable to write size to mempool_res_tx channel: {:?}", e);
+						error!("🚨 Node - Block Production | Unable to write size to mempool_res_tx channel: {:?}", e);
 					}
 				}
 			}
 		}
 
-		warn!("process_mempool worked exited");
+		warn!("⚠️ Node - Block Production | process_mempool worker exited");
 	}
 
 	async fn broadcast_network(
@@ -1018,7 +1019,7 @@ impl <'a> FullNode {
 								},
 								_ => {
 									warn!(
-										"Unable to broadcast node_info using network_client: {:?}",
+										"⚠️ Node - Block Production | Unable to broadcast node_info using network_client: {:?}",
 										e
 									);
 								},
@@ -1035,7 +1036,7 @@ impl <'a> FullNode {
 									// Ignore this warning
 								},
 								_ => {
-									warn!("Unable to broadcast transaction using network_client: {:?}", e);
+									warn!("⚠️ Node - Block Production | Unable to broadcast transaction using network_client: {:?}", e);
 								},
 							}
 						},
@@ -1050,7 +1051,7 @@ impl <'a> FullNode {
 									// Ignore this warning
 								},
 								_ => {
-									warn!("Unable to broadcast validate_block using network_client: {:?}", e);
+									warn!("⚠️ Node - Block Production | Unable to broadcast validate_block using network_client: {:?}", e);
 								},
 							}
 						},
@@ -1075,7 +1076,7 @@ impl <'a> FullNode {
 								},
 								_ => {
 									warn!(
-										"Unable to broadcast block_proposer using network_client: {:?}",
+										"⚠️ Node - Block Production | Unable to broadcast block_proposer using network_client: {:?}",
 										e
 									);
 								},
@@ -1092,7 +1093,7 @@ impl <'a> FullNode {
 									// Ignore this warning
 								},
 								_ => {
-									warn!("Unable to broadcast vote using network_client: {:?}", e);
+									warn!("⚠️ Node - Block Production | Unable to broadcast vote using network_client: {:?}", e);
 								},
 							}
 						},
@@ -1108,7 +1109,7 @@ impl <'a> FullNode {
 									// Ignore this warning
 								},
 								_ => {
-									warn!("Unable to broadcast vote_result using network_client: {:?}", e);
+									warn!("⚠️ Node - Block Production | Unable to broadcast vote_result using network_client: {:?}", e);
 								},
 							}
 						},
@@ -1123,7 +1124,7 @@ impl <'a> FullNode {
 									// Ignore this warning
 								},
 								_ => {
-									warn!("Unable to broadcast block request using network_client: {:?}", e);
+									warn!("⚠️ Node - Block Production | Unable to broadcast block request using network_client: {:?}", e);
 								},
 							}
 						},
@@ -1138,7 +1139,7 @@ impl <'a> FullNode {
 									// Ignore this warning
 								},
 								_ => {
-									warn!("Unable to broadcast block request using network_client: {:?}", e);
+									warn!("⚠️ Node - Block Production | Unable to broadcast block request using network_client: {:?}", e);
 								},
 							}
 						},
@@ -1153,7 +1154,7 @@ impl <'a> FullNode {
 									// Ignore this warning
 								},
 								_ => {
-									warn!("Unable to broadcast node health: {:?}", e);
+									warn!("⚠️ Node - Block Production | Unable to broadcast node health: {:?}", e);
 								},
 							}
 						},
@@ -1168,7 +1169,7 @@ impl <'a> FullNode {
 									// Ignore this warning
 								},
 								_ => {
-									warn!("Unable to broadcast aggregated node health: {:?}", e);
+									warn!("⚠️ Node - Block Production | Unable to broadcast aggregated node health: {:?}", e);
 								},
 							}
 						},
@@ -1183,7 +1184,7 @@ impl <'a> FullNode {
 									// Ignore this warning
 								},
 								_ => {
-									warn!("Unable to broadcast query node status request: {:?}", e);
+									warn!("⚠️ Node - Block Production | Unable to broadcast query node status request: {:?}", e);
 								},
 							}
 						},
@@ -1193,14 +1194,14 @@ impl <'a> FullNode {
 					match network_client.broadcast_node_detailed_status(node_detailed_status).await {
 						Ok(_) => {},
 						Err(e) => {
-							warn!("Unable to broadcast node detailed status: {:?}", e);
+							warn!("⚠️ Node - Block Production | Unable to broadcast node detailed status: {:?}", e);
 						},
 					};
 				},
 			}
 		}
 
-		warn!("broadcast_network worked exited");
+		warn!("⚠️ Node - Block Production | Broadcast Network worker exited");
 	}
 
 	/// Routes the payloads received from the network to the consensus function
@@ -1209,7 +1210,7 @@ impl <'a> FullNode {
 		mut consensus: Consensus,
 	){
 		let db_pool_conn =
-		Database::get_pool_connection().await.expect("error getting db_pool_conn");
+		Database::get_pool_connection().await.expect("🚨 Node - Receive Network | error getting db_pool_conn");
 
 		while let Some(receive_network) = network_receive_rx.recv().await {
 			match receive_network {
@@ -1222,28 +1223,28 @@ impl <'a> FullNode {
 			}
 		}
 
-		warn!("receive_network worker exited");
+		warn!("⚠️ Node - Receive Network | Receive Network worker exited");
 	}
 
 	async fn handle_block_proposer_event_type(payload: BlockProposerEventType, consensus: &mut Consensus, db_pool_conn: &'a DbTxConn<'a>,){
 		match payload {
 			BlockProposerEventType::AddBlock(block_payload, sender) => {
-				info!("📨 ℹ️ I just received a new Block #{} to be added into pending state", block_payload.block.block_header.block_number);
+				info!("🔍 ℹ️ 🔗 Node - Receive Network | Handle Block Proposer Event Type | I just received a new Block #{} to be added into pending state ", block_payload.block.block_header.block_number);
 				match consensus.add_and_broadcast_block(block_payload).await {
 					Ok(_) => {
 						// Operation was successful, send success acknowledgement
 						if let Err(e) = sender
 							.send(Ok(NetworkAcknowledgement::Success))
 						{
-							warn!("Unable to write acknowledgement to network_receive_tx_ack channel: {:?}", e)
+							warn!("🚨 Node - Receive Network | Handle Block Proposer Event Type | Unable to write acknowledgement to network_receive_tx_ack channel: {:?}", e)
 						}
 					},
 					Err(e) => {
-						warn!("Add and broadcast block failed: {:?}", e);
+						warn!("🚨 Node - Receive Network | Handle Block Proposer Event Type | Add and broadcast block failed: {:?}", e);
 						// Send the failure acknowledgment
 						if let Err(e) = sender.send(Ok(NetworkAcknowledgement::Failure))
 						{
-							warn!("Unable to write acknowledgement to network_receive_tx_ack channel: {:?}", e)
+							warn!("🚨 Node - Receive Network | Handle Block Proposer Event Type | Unable to write acknowledgement to network_receive_tx_ack channel: {:?}", e)
 						}
 					},
 				};
@@ -1253,118 +1254,119 @@ impl <'a> FullNode {
 	async fn handle_network_event_type(payload: NetworkEventType, consensus: &mut Consensus, db_pool_conn: &'a DbTxConn<'a>){
 		match payload {
 			NetworkEventType::ReceiveNodeInfo(node_info) => {
-				info!("📨 ℹ️ I just received a new NODE INFO from the network");
+				info!("🔍 ℹ️ 🔗 Node - Receive Network | Handle Network Event Type | I just received a new Node Info from the network | From: {}", hex::encode(&node_info.address));
 				match consensus.receive_node_info(node_info, &db_pool_conn).await {
 					Ok(_res) => {},
 					Err(e) => {
-						warn!("Received node_info failed: {:?}", e);
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Failed to receive node info: {:?}", e);
 					},
 				};
 			},
 			NetworkEventType::ReceiveValidateBlock(block_payload) => {
 				let block_number = block_payload.block.block_header.block_number;
 				info!(
-					"📨 🟪 I just received a new VALIDATE BLOCK #{} from the network",
+					"🔍 ⚖️ 🔗 Node - Receive Network | Handle Network Event Type | I just received a new Validate Block #{} from the network ",
 					block_number
 				);
 				match consensus.receive_validate_block(block_payload, &db_pool_conn).await {
 					Ok(_res) => {},
 					Err(e) => {
-						warn!("Received block_payload failed validation, block #{}: {:?}", block_number, e);
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Received block_payload failed validation, block #{}: {:?}", block_number, e);
 					},
 				};
 			},
 			NetworkEventType::ReceiveBlockProposer(block_proposer_payload) => {
-				info!("📨 🟪 I just received a new BLOCK PROPOSER from the network");
+				info!("🔍 👑 🔗 Node - Receive Network | Handle Network Event Type | I just received a new Block Proposer from the network , From : {}", hex::encode(&block_proposer_payload.sender));
 				match consensus.receive_block_proposer(block_proposer_payload, &db_pool_conn).await {
 					Ok(_res) => {},
 					Err(e) => {
-						warn!("Received block_proposer_payload failed validation: {:?}", e);
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Received block_proposer_payload failed validation: {:?}", e);
 					},
 				};
 			},
 			NetworkEventType::ReceiveVote(vote_payload) => {
-				info!("📨 I just received a new Vote from the network from: {}", hex::encode(&vote_payload.validator_address));
 				let block_number = vote_payload.data.block_number;
+				info!("🔍 🗳️ 🔗 Node - Receive Network | Handle Network Event Type | I just received a new Vote from the network from: {} for Block #{}", hex::encode(&vote_payload.validator_address), block_number);
+				
 				match consensus.receive_vote(vote_payload, &db_pool_conn).await {
 					Ok(_res) => {},
 					Err(e) => {
-						warn!("Received vote_payload failed validation, block #{}: {:?}", block_number, e);
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Received vote_payload failed validation, block #{}: {:?}", block_number, e);
 					},
 				};
 			},
 			NetworkEventType::ReceiveVoteResult(vote_result_payload) => {
 				let block_number = vote_result_payload.data.block_number;
-				info!("📨 ✓ 𐄂 Received new vote result, block #{}", block_number);
+				info!("🔍 🗳️ 🔗 Node - Receive Network | Handle Network Event Type | I just received a new Vote Result for Block #{}", block_number);
 				match consensus.receive_vote_result(vote_result_payload, &db_pool_conn).await {
 					Ok(_res) => {},
 					Err(e) => {
-						warn!("Received vote_result_payload failed validation, block #{}: {:?}", block_number, e);
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Received vote_result_payload failed validation, block #{}: {:?}", block_number, e);
 					},
 				};
 			},
 			NetworkEventType::ReceiveQueryBlockResponse( block_payload, vote_result ) => {
 				let block_number = block_payload.block.block_header.block_number;
 				// Validate and store the block
-				info!("📨 ✓ 𐄂 Received new block response #{}", block_number);
+				info!("🔍 ℹ️ 🔗 Node - Receive Network | Handle Network Event Type | I just received a new Block Response for Block #{}", block_number);
 				match consensus.receive_block(block_payload, vote_result, &db_pool_conn).await{
 					Ok(_res) => {
-						log::info!("Block Response successfully stored");
+						log::info!("🔍 Node - Receive Network | Handle Network Event Type | Block Response successfully stored");
 					},
 					Err(e) => {
-						warn!("Received block query payload failed validation: {:?}", e);
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Received block query payload failed validation: {:?}", e);
 					},
 				};
 			},
 			NetworkEventType::ReceiveQueryBlockRequest(request, channel) => {
 				// Validate and store the block
-				info!("📨 ✓ 𐄂 Received new block query request #{}", &request.block_number);
+				info!("🔍 ℹ️ 🔗 Node - Receive Network | Handle Network Event Type | I just received a new Block Query Request for Block #{}", &request.block_number);
 				let response = consensus.handle_query_block_request(request, &db_pool_conn).await.unwrap_or_else(|e| L1xResponse::QueryBlockError(e.to_string()));
 				
 				if let Err(e) =
 					consensus.network_client_tx.send(BroadcastNetwork::BroadcastQueryBlockResponse (response, channel )).await
 				{
-					warn!("Unable to write block request result to network_client_tx channel: {:?}", e)
+					warn!("🚨 Node - Receive Network | Handle Network Event Type | Unable to write block request result to network_client_tx channel: {:?}", e)
 				}			
 			},
 			NetworkEventType::ReceiveNodeHealth(node_healths) => {
-				info!("📨 🏥 I just received a new NODE HEALTHS from the network");
+				info!("🔍 💓 🔗 Node - Receive Network | Handle Network Event Type | I just received a new Node Health from the network | Count: {}", node_healths.len());
                 match consensus.receive_node_health(node_healths, db_pool_conn).await{
 					Ok(_res) => {
-						log::info!("📨 🏥 I just received a new NODE HEALTHS from the network");
+						log::info!("🔍 💓 🔗 Node - Receive Network | Handle Network Event Type | I just received a new Node Health from the network");
 					},
 					Err(e) => {
-						warn!("Failed to select node health: {:?}", e);
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Failed to select node health: {:?}", e);
 					},
 				};
             },
             NetworkEventType::ReceiveAggregatedNodeHealth(aggregated_healths) => {
 				match consensus.receive_signed_node_health(aggregated_healths, db_pool_conn).await{
 					Ok(_res) => {
-						log::info!("📨 🏥 I just received a new NODE HEALTH Payload from the network");
+						log::info!("🔍 💓 🔗 Node - Receive Network | Handle Network Event Type | I just received a new Aggregated Node Health from the network");
 					},
 					Err(e) => {
-						warn!("Failed to aggregate and broadcast node health: {:?}", e);
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Failed to aggregate and broadcast node health: {:?}", e);
 					},
 				};
             },
 			NetworkEventType::ProcessNodeHealth(epoch) => {
 				match consensus.process_health_update(epoch, db_pool_conn).await{
 					Ok(_res) => {
-						log::info!("Computed and broadcast local node health");
+						log::info!("🔍 💓 🔗 Node - Receive Network | Handle Network Event Type | Computed and broadcast local node health");
 					},
 					Err(e) => {
-						warn!("Failed to compute and broadcast node health: {:?}", e);
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Failed to compute and broadcast node health: {:?}", e);
 					},
 				};
 			},
 			NetworkEventType::AggregateNodeHealth(epoch) => {
 				match consensus.aggregate_and_broadcast_node_health(db_pool_conn, epoch).await{
 					Ok(_res) => {
-						log::info!("NetworkEventType::AggregateNodeHealth > aggregate and broadcast local node health , epoch: {:?}", epoch);
+						log::info!("🔍 💓 🔗 Node - Receive Network | Handle Network Event Type | Aggregate and broadcast local node health , epoch: {:?}", epoch);
 					},
 					Err(e) => {
-						warn!("NetworkEventType::AggregateNodeHealth > Failed to aggregate and broadcast node health: {:?}", e);
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Failed to aggregate and broadcast node health: {:?}", e);
 					},
 				};
 			},
@@ -1377,30 +1379,30 @@ impl <'a> FullNode {
 			NetworkEventType::CheckNodeStatus => {
 				match consensus.request_node_status().await {
 					Ok(_res) => {
-						log::info!("NetworkEventType::CheckNodeStatus > request node status");
+						log::info!("🔍 ℹ️ 🔗 Node - Receive Network | Handle Network Event Type | I just requested a new Check Node Status");
 					},
 					Err(e) => {
-						warn!("NetworkEventType::CheckNodeStatus > Failed to request node status: {:?}", e);
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Failed to request node status: {:?}", e);
 					},
 				};
 			},
 			NetworkEventType::PublishNodeDetailedStatus(peer_id) => {
 				match consensus.handle_publish_node_detailed_status(peer_id).await {
 					Ok(_res) => {
-						log::info!("NetworkEventType::PublishNodeDetailedStatus > publish node detailed status");
+						log::info!("🔍 ℹ️ 🔗 Node - Receive Network | Handle Network Event Type | I just published a new Node Detailed Status");
 					},
 					Err(e) => {
-						warn!("NetworkEventType::QueryNodeDetailedStatus > Failed to request node detailed status: {:?}", e);
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Failed to publish node detailed status: {:?}", e);
 					},
 				};
 			},
 			NetworkEventType::ReceiveNodeDetailedStatus(node_detailed_status) => {
 				match consensus.handle_receive_node_detailed_status(node_detailed_status.clone()).await {
 					Ok(_res) => {
-						log::info!("ID: NODE_DETAILED_STATUS, NetworkEventType::ReceiveNodeDetailedStatus > receive node detailed status, node_detailed_status: {:?}", node_detailed_status.clone());
+						log::info!("🔍 ℹ️ 🔗 Node - Receive Network | Handle Network Event Type | I just received a new Node Detailed Status");
 					},
 					Err(e) => {
-						warn!("ID: NODE_DETAILED_STATUS, NetworkEventType::ReceiveNodeDetailedStatus > Failed to receive node detailed status: {:?}", e);
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Failed to receive node detailed status: {:?}", e);
 					},
 				};
 			},
@@ -1414,14 +1416,14 @@ async fn set_initial_block_proposer<'a>(
 	db_pool_conn: &'a DbTxConn<'a>,
 	current_epoch: u64,
 ) {
-	let block_proposer_state = BlockProposerState::new(db_pool_conn).await.expect("failed to get block_proposer_state");
+	let block_proposer_state = BlockProposerState::new(db_pool_conn).await.expect("🚨 Node - Set Initial Block Proposer | failed to get block_proposer_state");
 	let mut cluster_block_proposers = HashMap::new();
 	cluster_block_proposers.insert(
 		cluster_address.clone(),
 		HashMap::from([(current_epoch, node_address.clone())]),
 	);
 	block_proposer_state.store_block_proposers(&cluster_block_proposers, Some(node_address.clone()), Some(cluster_address.clone()))
-		.await.expect("failed to set initial block proposer");
+		.await.expect("🚨 Node - Set Initial Block Proposer | failed to set initial block proposer");
 }
 
 async fn broadcast_node_info<'a>(
@@ -1430,18 +1432,18 @@ async fn broadcast_node_info<'a>(
 	network_client_tx: mpsc::Sender<BroadcastNetwork>,
 ) {
 	let node_info_state =
-		NodeInfoState::new(&db_pool_conn).await.expect("Unable to get node info state");
+		NodeInfoState::new(&db_pool_conn).await.expect("🚨 Node - Broadcast Node Info | Unable to get node info state");
 
 	let node_info = match node_info_state.load_node_info(node_address).await {
 		Ok(info) => info,
 		Err(e) =>
-			panic!("Failed to load node info because {}", e),
+			panic!("🚨 Node - Broadcast Node Info | Failed to load node info because {}", e),
 	};
 
 	network_client_tx
 		.send(BroadcastNetwork::BroadcastNodeInfo(node_info.clone()))
 		.await
-		.expect("Unable to send node_info to network_client_tx");
+		.expect("🚨 Node - Broadcast Node Info | Unable to send node_info to network_client_tx");
 }
 
 pub async fn mempool_add_transaction(mempool_tx: mpsc::Sender<ProcessMempool>, transaction: Transaction) -> Result<(), NodeError> {
@@ -1450,9 +1452,9 @@ pub async fn mempool_add_transaction(mempool_tx: mpsc::Sender<ProcessMempool>, t
 	match mempool_tx.send(ProcessMempool::AddTransaction(transaction.clone(), response_mempool_tx)).await {
 		Ok(_) => (),
 		Err(e) => {
-			log::warn!("Unable to write transaction to mempool channel: {:?}", e);
+			log::warn!("🚨 Node - Mempool Add Transaction | Unable to write transaction to mempool channel: {:?}", e);
 			return Err(NodeError::UnexpectedError(format!(
-				"Something went wrong: {:?}",
+				"🚨 Node - Mempool Add Transaction | Something went wrong: {:?}",
 				e
 			)));
 		}
@@ -1463,19 +1465,19 @@ pub async fn mempool_add_transaction(mempool_tx: mpsc::Sender<ProcessMempool>, t
 				match mempool_ack {
 					ResponseMempool::Success => Ok(()),
 					ResponseMempool::FailedToAddTransaction => {
-						error!("Transaction has been dropped or not included in a block");
-						Err(NodeError::UnexpectedError(format!("Transaction has been dropped or not included in a block")))
+						error!("🚨 Node - Mempool Add Transaction | Transaction has been dropped or not included in a block");
+						Err(NodeError::UnexpectedError(format!("🚨 Node - Mempool Add Transaction | Transaction has been dropped or not included in a block")))
 					}
 				}
 			}
 			Err(e) => {
-				error!("Received error in mempool receiver: {:?}", e);
-				Err(NodeError::UnexpectedError(format!("Received error in mempool receiver: {:?}", e)))
+				error!("🚨 Node - Mempool Add Transaction | Received error in mempool receiver: {:?}", e);
+				Err(NodeError::UnexpectedError(format!("🚨 Node - Mempool Add Transaction | Received error in mempool receiver: {:?}", e)))
 			}
 		},
 		Err(e) => {
-			error!("Failed to receive message from mempool receiver: {:?}", e);
-			Err(NodeError::UnexpectedError(format!("Failed to receive message from mempool receiver: {:?}", e)))
+			error!("🚨 Node - Mempool Add Transaction | Failed to receive message from mempool receiver: {:?}", e);
+			Err(NodeError::UnexpectedError(format!("🚨 Node - Mempool Add Transaction | Failed to receive message from mempool receiver: {:?}", e)))
 		}
 	}
 
@@ -1500,10 +1502,10 @@ pub async fn update_node_info(
 				for rpc_node_info in response.into_inner().node_info {
 					let system_node_info = convert_to_system_node_info(rpc_node_info)?;
 					node_info_state.store_node_info(&system_node_info).await?;
-					info!("Updated/Added node info for {}", hex::encode(&system_node_info.address));
+					info!("🔍 ℹ️ 🔗 Node - Update Node Info | Updated/Added node info for {}", hex::encode(&system_node_info.address));
 				}
 			},
-			Err(e) => warn!("Failed to get all node info from {}: {}", endpoint, e),
+			Err(e) => warn!("🚨 Node - Update Node Info | Failed to get all node info from {}: {}", endpoint, e),
 		}
 	}
 
@@ -1528,22 +1530,22 @@ pub async fn update_genesis_block(
         match grpc_client.get_genesis_block(request).await {
             Ok(response) => {
                 let genesis_block = response.into_inner().genesis_block
-                    .ok_or_else(|| anyhow::anyhow!("No genesis block in response"))?;
+                    .ok_or_else(|| anyhow::anyhow!("🚨 Node - Update Genesis Block | No genesis block in response"))?;
 
                 block_state.store_genesis_block_time(
                     genesis_block.block_number as u128,
                     genesis_block.epoch as u64
                 ).await?;
 
-                info!("Updated genesis block: block_number = {}, epoch = {}",
+                info!("🔍 🌱 🔗 Node - Update Genesis Block | Updated Genesis Block | Block Number: {}, Epoch: {}",
                       genesis_block.block_number, genesis_block.epoch);
                 return Ok(());
             },
-            Err(e) => warn!("Failed to get genesis block from {}: {}", endpoint, e),
+            Err(e) => warn!("🚨 Node - Update Genesis Block | Failed to get genesis block from {}: {}", endpoint, e),
         }
     }
 
-    Err(anyhow::anyhow!("Failed to update genesis block from any bootnode"))
+    Err(anyhow::anyhow!("🚨 Node - Update Genesis Block | Failed to update genesis block from any bootnode"))
 }
 
 // Add constants for configurability
@@ -1578,16 +1580,16 @@ pub async fn update_node_healths(
 					Ok(system_node_health) => {
 						if let Err(e) = nhs_clone.upsert_node_health(&system_node_health).await {
 							last_error = Some(e.to_string());
-							warn!("Partial failure updating {}: {}", system_node_health.measured_peer_id, e);
+							warn!("🚨 Node - Update Node Health | Partial failure updating {}: {}", system_node_health.measured_peer_id, e);
 						} else {
 							processed += 1;
 						}
 					},
-					Err(e) => warn!("Invalid health data from {}: {}", endpoint.clone(), e),
+					Err(e) => warn!("🚨 Node - Update Node Health | Invalid health data from {}: {}", endpoint.clone(), e),
 				}
 			}
 			
-			info!("Processed {}/{} entries from {}", processed, health_count, endpoint);
+			info!("🔍 ℹ️ 🔗 Node - Update Node Health | Processed {}/{} entries from {}", processed, health_count, endpoint);
 			last_error
 				.map(|e| Err(anyhow::anyhow!(e)))  // Convert String to anyhow::Error
 				.unwrap_or(Ok(()))
@@ -1613,8 +1615,8 @@ pub async fn update_node_healths(
 					response = Ok(Some(res.into_inner().node_healths));
 					break;
 				},
-				Ok(Err(e)) => warn!("Attempt {} failed: {}", attempt, e),
-				Err(_) => warn!("Timeout on attempt {}", attempt),
+				Ok(Err(e)) => warn!("🚨 Node - Update Node Health | Attempt {} failed: {}", attempt, e),
+				Err(_) => warn!("🚨 Node - Update Node Health | Timeout on attempt {}", attempt),
 			}
 			
 			attempt += 1;
@@ -1629,7 +1631,7 @@ pub async fn update_node_healths(
 		// Fallback to previous epochs with freshness check
 		if epoch > 0 && (epoch.saturating_sub(FALLBACK_EPOCH_LIMIT)) < epoch {
 			let fallback_epoch = epoch - 1;
-			warn!("Falling back to epoch {} for {}", fallback_epoch, endpoint_clone);
+			warn!("🚨 Node - Update Node Health | Falling back to epoch {} for {}", fallback_epoch, endpoint_clone);
 			
 			if let Ok(prev_response) = grpc_client.get_node_healths(
 				l1x_rpc::rpc_model::GetNodeHealthsRequest { epoch: fallback_epoch }
@@ -1659,11 +1661,11 @@ async fn update_block_proposer_and_validator(bootnodes: &[&str], epoch: Epoch, c
 				let response = response.into_inner();
 				for bp_for_epoch in response.bp_for_epoch {
 					let block_proposer_address = Address::try_from(bp_for_epoch.bp_address)
-						.map_err(|_| anyhow::anyhow!("Error while converting block_proposer bytes to address"))?;
+						.map_err(|_| anyhow::anyhow!("🚨 Node - Update Block Proposer and Validator | Error while converting block_proposer bytes to address"))?;
 					block_proposer_state.upsert_block_proposer(cluster_address, bp_for_epoch.epoch, block_proposer_address).await?;
 				}
 			},
-			Err(e) => warn!("Failed to get block proposer for epoch {}: {}", epoch, e),
+			Err(e) => warn!("🚨 Node - Update Block Proposer and Validator | Failed to get block proposer for epoch {}: {}", epoch, e),
 		}
 
 		let request = l1x_rpc::rpc_model::GetValidatorsForEpochRequest { epoch };
@@ -1674,19 +1676,19 @@ async fn update_block_proposer_and_validator(bootnodes: &[&str], epoch: Epoch, c
 					for res_validator in validators_for_epoch.validators {
 						let validator = Validator {
 							address: Address::try_from(res_validator.address)
-								.map_err(|_| anyhow::anyhow!("Error converting validator bytes to address"))?,
+								.map_err(|_| anyhow::anyhow!("🚨 Node - Update Block Proposer and Validator | Error converting validator bytes to address"))?,
 							cluster_address: Address::try_from(res_validator.cluster_address)
-								.map_err(|_| anyhow::anyhow!("Error converting cluster_address bytes to address"))?,
+								.map_err(|_| anyhow::anyhow!("🚨 Node - Update Block Proposer and Validator | Error converting cluster_address bytes to address"))?,
 							epoch: res_validator.epoch,
 							stake: res_validator.stake.parse::<u128>()
-								.map_err(|_| anyhow::anyhow!("Error converting stake string to u128"))?,
+								.map_err(|_| anyhow::anyhow!("🚨 Node - Update Block Proposer and Validator | Error converting stake string to u128"))?,
 							xscore: res_validator.xscore,
 						};
 						validator_state.upsert_validator(&validator).await?;
 					}
 				}
 			},
-			Err(e) => warn!("Failed to get block proposer for epoch {}: {}", epoch, e),
+			Err(e) => warn!("🚨 Node - Update Block Proposer and Validator | Failed to get block proposer for epoch {}: {}", epoch, e),
 		}
 	}
 
@@ -1696,13 +1698,13 @@ async fn update_block_proposer_and_validator(bootnodes: &[&str], epoch: Epoch, c
 fn convert_to_system_node_info(node_info: l1x_rpc::rpc_model::NodeInfo) -> Result<NodeInfo, Error> {
 	Ok(NodeInfo {
 		address: Address::try_from(node_info.address)
-			.map_err(|_| anyhow::anyhow!("Invalid address"))?,
+			.map_err(|_| anyhow::anyhow!("🚨 Node - Convert to System Node Info | Invalid address"))?,
 		peer_id: node_info.peer_id,
 		data: NodeInfoSignPayload {
 			ip_address: node_info.ip_address,
 			metadata: node_info.metadata,
 			cluster_address: Address::try_from(node_info.cluster_address)
-				.map_err(|_| anyhow::anyhow!("Invalid cluster address"))?,
+				.map_err(|_| anyhow::anyhow!("🚨 Node - Convert to System Node Info | Invalid cluster address"))?,
 		},
 		joined_epoch: node_info.joined_epoch,
 		signature: node_info.signature,
@@ -1729,7 +1731,7 @@ async fn try_initialize_runtime_configs(cluster_address: Address) -> Result<(), 
 	match tokio::task::spawn_blocking(move || {
 		let result =  async_scoped::TokioScope::scope_and_block(|scope|{
 			scope.spawn_blocking(|| {
-				let res: Result<(), Error> = tokio::runtime::Runtime::new().expect("Can't create tokio runtime").block_on(async {
+				let res: Result<(), Error> = tokio::runtime::Runtime::new().expect("🚨 Node - Try Initialize Runtime Configs | Can't create tokio runtime").block_on(async {
 						let (tx, _drop_guard) = state::updated_state_db::run_db_handler().await?; 
 						let updated_state = state::UpdatedState::new(tx);
 						let db_pool_conn = db::db::Database::get_pool_connection().await?;
@@ -1751,17 +1753,17 @@ async fn try_initialize_runtime_configs(cluster_address: Address) -> Result<(), 
 					res
 				},
 				Err(e) => {
-					error!("Join Error: {e}");
+					error!("🚨 Node - Try Initialize Runtime Configs | Join Error: {e}");
 					Err(e)?
 				},
 			}
 		} else {
-			error!("No results after scope_and_block");
-			Err(anyhow::anyhow!("No results after scope_and_block"))
+			error!("🚨 Node - Try Initialize Runtime Configs | No results after scope_and_block");
+			Err(anyhow::anyhow!("🚨 Node - Try Initialize Runtime Configs | No results after scope_and_block"))
 		}
 	}).await {
 		Ok(res) => res,
-		Err(e) => Err(anyhow::anyhow!("JoinError: {e}")),
+		Err(e) => Err(anyhow::anyhow!("🚨 Node - Try Initialize Runtime Configs | Join Error: {e}")),
 	}
 }
 
@@ -1769,7 +1771,7 @@ pub async fn grpc_connect_bootnodes(
 	bootnodes: &[&str],
 ) -> Result<Vec<Arc<Mutex<(NodeClient<tonic::transport::Channel>, String)>>>, Error> {
 
-	info!("node ~ grpc_connect_bootnodes ~ bootnodes: {:?}", bootnodes);
+	info!("🔍  📡 🔗 Node - Grpc Connect Bootnodes | bootnodes: {:?}", bootnodes);
 
 	let sync_endpoints = multiaddrs_to_http_urls(bootnodes);
 	let mut grpc_clients = Vec::new();
@@ -1777,17 +1779,17 @@ pub async fn grpc_connect_bootnodes(
 	for endpoint in sync_endpoints {
 		match NodeClient::connect(endpoint.clone()).await {
 			Ok(grpc_client) => {
-				info!("Connection successful to endpoint: {}", endpoint);
+				info!("🔍  📡 🔗 Node - Grpc Connect Bootnodes | Connection successful to endpoint: {}", endpoint);
 				// Increase max message size because Block can be bigger than 4Mb (default value)
 				let grpc_client = grpc_client.max_decoding_message_size(usize::MAX);
 				grpc_clients.push(Arc::new(Mutex::new((grpc_client, endpoint))));
 			},
-			Err(err) => warn!("Failed to connect to endpoint {}: {:?}", endpoint, err),
+			Err(err) => warn!("🚨 Node - Grpc Connect Bootnodes | Failed to connect to endpoint {}: {:?}", endpoint, err),
 		}
 	}
 
 	if grpc_clients.is_empty() {
-		return Err(anyhow::anyhow!("No boot nodes available"));
+		return Err(anyhow::anyhow!("🚨 Node - Grpc Connect Bootnodes | No boot nodes available"));
 	}
 
 	Ok(grpc_clients)
