@@ -644,8 +644,8 @@ impl<'a>  Consensus {
 		}
 
 		// Expire old pending blocks
-		let expired = self.pending_blocks.expire_old_blocks(PENDING_BLOCK_EXPIRATION_TIME);
-		warn!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Expired pending blocks: {:?}", expired);
+		// let expired = self.pending_blocks.expire_old_blocks(PENDING_BLOCK_EXPIRATION_TIME);
+		// warn!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Expired pending blocks: {:?}", expired);
 		
 		// NEW LOGIC: Only refuse if there are pending blocks that are not finalized
 		let pending_blocks = self.pending_blocks.get_blocks();

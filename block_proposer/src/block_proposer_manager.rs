@@ -32,13 +32,7 @@ impl<'a> BlockProposerManager {
 		cluster_block_proposers.insert(block_header.cluster_address, block_proposers.clone());
 
 		let block_proposer_state = BlockProposerState::new(db_pool_conn).await?;
-		block_proposer_state
-			.store_block_proposers(
-				&cluster_block_proposers,
-				Some(selected_address),
-				Some(block_header.cluster_address),
-			).await?;
-	
+		block_proposer_state.upsert_block_proposer(block_header.cluster_address, epoch, selected_address).await?;
 		Ok(selected_address)
 	}
 	

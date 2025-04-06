@@ -52,6 +52,7 @@ use system::node_health::NodeHealth;
 use l1x_node_health::NodeHealthState;
 use system::validator::Validator;
 use validator::validator_state::ValidatorState;
+use anyhow::anyhow;
 
 #[derive(Debug, Clone)]
 pub struct FullNode {
@@ -1644,55 +1645,201 @@ pub async fn update_node_healths(
 	Ok(())
 }
 
-async fn update_block_proposer_and_validator(bootnodes: &[&str], epoch: Epoch, cluster_address: Address) -> Result<(), Error> {
-	let grpc_clients = grpc_connect_bootnodes(bootnodes).await?;
+async fn update_block_proposer_and_validator(
+    bootnodes: &[&str], 
+    epoch: Epoch, 
+    cluster_address: Address
+) -> Result<(), Error> {
+    // Connect to bootnodes
+    let grpc_clients = grpc_connect_bootnodes(bootnodes).await?;
+    let db_pool_conn = Database::get_pool_connection().await?;
+    
+    // Collect responses from all bootnodes
+    let mut proposer_responses = Vec::new();
+    let mut validator_responses = Vec::new();
+    let mut successful_connections = 0;
+    
+    // For each bootnode
+    for client_mutex in &grpc_clients {
+        let mut client_guard = client_mutex.lock().await;
+        let (grpc_client, endpoint) = &mut *client_guard;
+        
+        // 1. Try to get block proposer with simple retry
+        if let Some(response) = try_get_block_proposer(grpc_client, endpoint, epoch).await {
+            proposer_responses.push(response);
+            successful_connections += 1;
+        }
+        
+        // 2. Try to get validators with simple retry
+        if let Some(response) = try_get_validators(grpc_client, endpoint, epoch).await {
+            validator_responses.push(response);
+        }
+    }
 
-	let db_pool_conn = Database::get_pool_connection().await?;
-	for client_mutex in &grpc_clients {
-		let mut client_guard = client_mutex.lock().await;
-		let (grpc_client, endpoint) = &mut *client_guard;
+    // Make sure we have enough connections for quorum
+    let quorum_threshold = match successful_connections {
+        1 => 1,  // Single bootnode - trust it
+        2 => 1,  // Two bootnodes - trust if at least one agrees
+        _ => (successful_connections / 2) + 1  // Three or more - use majority
+    };
 
-		// Handle Block Proposers
-		let request = l1x_rpc::rpc_model::GetBpForEpochRequest { epoch };
+    // Only fail if we have no successful connections
+    if successful_connections == 0 {
+        return Err(anyhow!("No successful connections to any bootnode"));
+    }
 
-		match grpc_client.get_block_proposer_for_epoch(request).await {
-			Ok(response) => {
-				let block_proposer_state = BlockProposerState::new(&db_pool_conn).await?;
-				let response = response.into_inner();
-				for bp_for_epoch in response.bp_for_epoch {
-					let block_proposer_address = Address::try_from(bp_for_epoch.bp_address)
-						.map_err(|_| anyhow::anyhow!("🚨 Node - Update Block Proposer and Validator | Error while converting block_proposer bytes to address"))?;
-					block_proposer_state.upsert_block_proposer(cluster_address, bp_for_epoch.epoch, block_proposer_address).await?;
-				}
-			},
-			Err(e) => warn!("🚨 Node - Update Block Proposer and Validator | Failed to get block proposer for epoch {}: {}", epoch, e),
-		}
+    // 3. Process block proposers - find the most common one
+    let most_common_proposer = find_most_common_proposer(&proposer_responses, quorum_threshold)?;
+    
+    // 4. Update block proposer if we have a quorum
+    if let Some(proposer_address) = most_common_proposer {
+        let block_proposer_state = BlockProposerState::new(&db_pool_conn).await?;
+        block_proposer_state.upsert_block_proposer(
+            cluster_address,
+            epoch,
+            proposer_address
+        ).await?;
+        info!("Block proposer updated with quorum: {}", hex::encode(proposer_address));
+    } else {
+        warn!("No quorum reached for block proposer selection");
+    }
 
-		let request = l1x_rpc::rpc_model::GetValidatorsForEpochRequest { epoch };
-		match grpc_client.get_validators_for_epoch(request).await {
-			Ok(response) => {
-				let validator_state = ValidatorState::new(&db_pool_conn).await?;
-				for validators_for_epoch in response.into_inner().validators_for_epochs {
-					for res_validator in validators_for_epoch.validators {
-						let validator = Validator {
-							address: Address::try_from(res_validator.address)
-								.map_err(|_| anyhow::anyhow!("🚨 Node - Update Block Proposer and Validator | Error converting validator bytes to address"))?,
-							cluster_address: Address::try_from(res_validator.cluster_address)
-								.map_err(|_| anyhow::anyhow!("🚨 Node - Update Block Proposer and Validator | Error converting cluster_address bytes to address"))?,
-							epoch: res_validator.epoch,
-							stake: res_validator.stake.parse::<u128>()
-								.map_err(|_| anyhow::anyhow!("🚨 Node - Update Block Proposer and Validator | Error converting stake string to u128"))?,
-							xscore: res_validator.xscore,
-						};
-						validator_state.upsert_validator(&validator).await?;
-					}
-				}
-			},
-			Err(e) => warn!("🚨 Node - Update Block Proposer and Validator | Failed to get block proposer for epoch {}: {}", epoch, e),
-		}
-	}
+    // 5. Process validators - find the ones that appear in majority of responses
+    let validators_with_quorum = find_validators_with_quorum(&validator_responses, quorum_threshold)?;
+    
+    // 6. Update validators if we have any with quorum
+    if !validators_with_quorum.is_empty() {
+        let validator_state = ValidatorState::new(&db_pool_conn).await?;
+        validator_state.batch_store_validators(&validators_with_quorum).await?;
+        info!("Validators updated with quorum: {} validators", validators_with_quorum.len());
+    } else {
+        warn!("No quorum reached for validator selection");
+    }
 
-	Ok(())
+    Ok(())
+}
+
+// Helper function to get block proposer with retry
+async fn try_get_block_proposer(
+    grpc_client: &mut NodeClient<tonic::transport::Channel>,
+    endpoint: &str,
+    epoch: Epoch
+) -> Option<l1x_rpc::rpc_model::GetBpForEpochResponse> {
+    let request = l1x_rpc::rpc_model::GetBpForEpochRequest { epoch };
+    
+    for attempt in 0..3 {
+        match grpc_client.get_block_proposer_for_epoch(request.clone()).await {
+            Ok(response) => return Some(response.into_inner()),
+            Err(e) => {
+                if attempt < 2 {
+                    // Simple backoff: wait longer for each retry
+                    let delay = (attempt + 1) * 1000;
+                    tokio::time::sleep(Duration::from_millis(delay as u64)).await;
+                    warn!("Failed to get block proposer from {} (retry {}/3): {}", endpoint, attempt + 1, e);
+                } else {
+                    warn!("Failed to get block proposer from {} after 3 attempts: {}", endpoint, e);
+                }
+            }
+        }
+    }
+    
+    None
+}
+
+// Helper function to get validators with retry
+async fn try_get_validators(
+    grpc_client: &mut NodeClient<tonic::transport::Channel>,
+    endpoint: &str,
+    epoch: Epoch
+) -> Option<l1x_rpc::rpc_model::GetValidatorsForEpochResponse> {
+    let request = l1x_rpc::rpc_model::GetValidatorsForEpochRequest { epoch };
+    
+    for attempt in 0..3 {
+        match grpc_client.get_validators_for_epoch(request.clone()).await {
+            Ok(response) => return Some(response.into_inner()),
+            Err(e) => {
+                if attempt < 2 {
+                    // Simple backoff: wait longer for each retry
+                    let delay = (attempt + 1) * 1000;
+                    tokio::time::sleep(Duration::from_millis(delay as u64)).await;
+                    warn!("Failed to get validators from {} (retry {}/3): {}", endpoint, attempt + 1, e);
+                } else {
+                    warn!("Failed to get validators from {} after 3 attempts: {}", endpoint, e);
+                }
+            }
+        }
+    }
+    
+    None
+}
+
+// Find the most common proposer that meets quorum threshold
+fn find_most_common_proposer(
+    responses: &[l1x_rpc::rpc_model::GetBpForEpochResponse],
+    quorum_threshold: usize
+) -> Result<Option<Address>, Error> {
+    let mut proposer_counts = HashMap::new();
+    
+    // Count occurrences of each proposer
+    for response in responses {
+        for bp in &response.bp_for_epoch {
+            *proposer_counts.entry(bp.bp_address.clone()).or_insert(0) += 1;
+        }
+    }
+    
+    // Find the most common proposer that meets quorum
+    let most_common = proposer_counts.into_iter()
+        .filter(|&(_, count)| count >= quorum_threshold)
+        .max_by_key(|&(_, count)| count);
+    
+    if let Some((address_str, _)) = most_common {
+        let address = Address::try_from(address_str)
+            .map_err(|_| anyhow::anyhow!("🚨 Node - Find Most Common Proposer | Invalid address"))?;
+        Ok(Some(address))
+    } else {
+        Ok(None)
+    }
+}
+
+// Find validators that appear in enough responses to meet quorum
+fn find_validators_with_quorum(
+    responses: &[l1x_rpc::rpc_model::GetValidatorsForEpochResponse],
+    quorum_threshold: usize
+) -> Result<Vec<Validator>, Error> {
+    let mut validator_counts = HashMap::new();
+    let mut validator_details = HashMap::new();
+    
+    // Count each validator and store details
+    for response in responses {
+        for validators_for_epoch in &response.validators_for_epochs {
+            for validator in &validators_for_epoch.validators {
+                *validator_counts.entry(validator.address.clone()).or_insert(0) += 1;
+                validator_details.insert(validator.address.clone(), validator.clone());
+            }
+        }
+    }
+    
+    // Collect validators that meet quorum
+    let mut validators_with_quorum = Vec::new();
+    for (address_str, count) in validator_counts {
+        if count >= quorum_threshold {
+            if let Some(detail) = validator_details.get(&address_str) {
+                let validator = Validator {
+                    address: Address::try_from(address_str)
+                        .map_err(|_| anyhow::anyhow!("🚨 Node - Find Validators With Quorum | Invalid address"))?,
+                    cluster_address: Address::try_from(detail.cluster_address.clone())
+                        .map_err(|_| anyhow::anyhow!("🚨 Node - Find Validators With Quorum | Invalid cluster address"))?,
+                    epoch: detail.epoch,
+                    stake: detail.stake.parse::<u128>()
+                        .map_err(|_| anyhow::anyhow!("🚨 Node - Find Validators With Quorum | Invalid stake"))?,
+                    xscore: detail.xscore,
+                };
+                validators_with_quorum.push(validator);
+            }
+        }
+    }
+    
+    Ok(validators_with_quorum)
 }
 
 fn convert_to_system_node_info(node_info: l1x_rpc::rpc_model::NodeInfo) -> Result<NodeInfo, Error> {
