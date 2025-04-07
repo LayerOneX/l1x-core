@@ -549,38 +549,46 @@ async fn get_missing_blocks(
     include_validators: bool,
     grpc_clients: Vec<(NodeClient<Channel>, String)>,
 ) -> Vec<(Block, Option<VoteResult>, Vec<Validator>)> {
-    let mut grpc_clients_iter = grpc_clients.iter().cycle();
-
-    let mut tasks = Vec::new();
-
-    for block_number in block_numbers {
-        let (grpc_client, endpoint) = grpc_clients_iter.next().unwrap().clone();
-        let task = tokio::spawn(async move { fetch_block(block_number, include_vote_result, include_validators, endpoint, grpc_client).await });
-
-        tasks.push(task);
-    }
-
-    // Wait for all tasks to complete
-    let results = futures::future::join_all(tasks).await;
     let mut found_blocks: Vec<(Block, Option<VoteResult>, Vec<Validator>)> = Vec::new();
-
-    for result in results {
-        match result {
-            Ok(block) => match block {
-                Ok(block) => {
-                    let (block_number, block_option, vote_result, validators) = block;
-                    match block_option {
-                        Some(block) => {
-                            found_blocks.push((block, vote_result, validators));
-                        }
-                        None => {
-                            panic!("Block {} is missing during sync", block_number);
-                        }
-                    }
+    
+    // Try each block with each bootnode until success
+    for block_number in block_numbers {
+        let mut block_found = false;
+        
+        // Try each bootnode for this block
+        for (client, endpoint) in grpc_clients.iter() {
+            match fetch_block(
+                block_number,
+                include_vote_result,
+                include_validators,
+                endpoint.clone(),
+                client.clone(),
+            ).await {
+                Ok((_, Some(block), vote_result, validators)) => {
+                    found_blocks.push((block, vote_result, validators));
+                    block_found = true;
+                    break; // Found the block, try next block
                 }
-                Err((block_number, e)) => panic!("Error syncing missing block #{}: {}", block_number, e),
-            },
-            Err(e) => panic!("Error syncing missing block(s): {}", e),
+                Ok((_, None, _, _)) => {
+                    warn!(
+                        "Block #{} not found on {}, trying next bootnode if available",
+                        block_number, endpoint
+                    );
+                    continue; // Try next bootnode
+                }
+                Err((_, e)) => {
+                    warn!(
+                        "Failed to fetch block #{} from {}, trying next bootnode if available",
+                        block_number, endpoint
+                    );
+                    continue; // Try next bootnode
+                }
+            }
+        }
+        
+        if !block_found {
+            // If we've tried all bootnodes and still failed, panic as per existing behavior
+            panic!("Block {} is missing during sync", block_number);
         }
     }
 
