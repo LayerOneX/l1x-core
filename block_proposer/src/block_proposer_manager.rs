@@ -7,7 +7,7 @@ use system::block_header::BlockHeader;
 use system::block_proposer::BlockProposer;
 use system::validator::Validator;
 use validator::validator_manager::ValidatorManager;
-
+use log::debug;
 pub struct BlockProposerManager {}
 
 impl<'a> BlockProposerManager {
@@ -21,15 +21,18 @@ impl<'a> BlockProposerManager {
 	) -> Result<Address, Error> {
 		let mut eligible_validators = validators;
 		let seed = ValidatorManager.calculate_seed(block_header.block_hash, epoch);
-	
+		
+		debug!("🤝 Consensus | Block #{} | Epoch {} | Proposer Selection | Seed: {}", block_header.block_number, epoch, seed);
 		let mut cluster_block_proposers = HashMap::new();
 		let mut block_proposers = HashMap::new();
 
 		let proposer_index = self.calculate_proposer_index(seed, eligible_validators.len());
 		let selected_address = eligible_validators[proposer_index].address;
 		block_proposers.insert(epoch, selected_address);
-	
 		cluster_block_proposers.insert(block_header.cluster_address, block_proposers.clone());
+
+
+		debug!("🤝 Consensus | Block #{} | Epoch {} | Proposer Selection | Proposer Index: {}", block_header.block_number, epoch, proposer_index);
 
 		let block_proposer_state = BlockProposerState::new(db_pool_conn).await?;
 		block_proposer_state.upsert_block_proposer(block_header.cluster_address, epoch, selected_address).await?;

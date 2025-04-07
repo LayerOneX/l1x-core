@@ -342,13 +342,17 @@ impl<'a> PendingBlock {
 			let block_manager = BlockManager{};
 			let block_number = block_payload.block.block_header.block_number + 1;
 			let new_epoch = block_manager.calculate_current_epoch(block_number)?;
+					
 			if new_epoch > block_payload.block.block_header.epoch {
-				let block_state = BlockState::new(db_pool_conn).await?;
-				let last_block_header = block_state
-					.block_head_header(block_payload.block.block_header.cluster_address).await?;
+		
+				debug!("🤝 Consensus | Block #{} | Epoch {} | End of Epoch | Proposer Selection", block_number, new_epoch);
+				// let last_block_header = {
+				// 	let block_state = BlockState::new(db_pool_conn).await?;
+				// 	block_state.block_head_header(block_payload.block.block_header.cluster_address).await?
+				// };
 				select_and_store_validators_and_proposer(
 					new_epoch,
-					&last_block_header,
+					&block_payload.block.block_header,
 					db_pool_conn
 				).await.map_err(|error| anyhow!("🤝 Consensus | Block #{} | Epoch {} | Proposer Selection Failed | Error: {}", block_number, new_epoch, error))?;
 			}
