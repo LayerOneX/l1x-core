@@ -55,7 +55,7 @@ impl InitCmd {
 		// Create a Config struct with default values
 		let mut config_data = Config::default();
 		// Create default genesis data
-		let genesis_data = Genesis::new(config_data.dev_mode);
+		let mut genesis_data = Genesis::new(config_data.dev_mode);
 
 		Database::re_initialize(&config_data).await;
 
@@ -74,7 +74,8 @@ impl InitCmd {
 			.expect("Wrong length of Vec");
 		let validator_pool_address =
 			self.create_validators_pool(&genesis_node_address, &cluster_address).await;
-		config_data.validator_pool_address = hex::encode(validator_pool_address);
+		config_data.validator_pool_address = hex::encode(validator_pool_address.clone());
+		genesis_data.data.staking_pool_address = validator_pool_address.clone();
 
 		let secret_key = SecretKey::from_slice(
 			&hex::decode(config_data.node_private_key.clone())

@@ -381,7 +381,7 @@ impl<'a> PendingBlock {
 
 			Ok(events)
 		} else {
-			Err(anyhow!("🤝 Consensus | Block #{} | Vote Result Failed | No Passing Votes Yet", block_payload.block.block_header.block_number))
+			Err(anyhow!("🤝 Consensus | Block #{} | Waiting for more votes", block_payload.block.block_header.block_number))
 		}
 	}
 
