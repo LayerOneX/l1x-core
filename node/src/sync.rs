@@ -189,6 +189,7 @@ pub async fn sync_node(
     endpoints: &[&str],
     event_tx: broadcast::Sender<EventBroadcast>,
     batch_size: u16,
+    block_batch_mpsc_capacity: usize,
 ) -> Result<(), Error> {
     let sync_endpoints = multiaddrs_to_http_urls(endpoints);
 
@@ -269,7 +270,7 @@ pub async fn sync_node(
     info!("Beginning execution from block #{}", start_execute_block_number);
     
     // Channel for send block batches to be verified and stored
-    let (block_batch_tx, block_batch_rx) = mpsc::channel(10_000);
+    let (block_batch_tx, block_batch_rx) = mpsc::channel(block_batch_mpsc_capacity);
 
     // Start the block validate and store process
     let store_validate_blocks = tokio::spawn(async move { validate_and_store_blocks(chain_last_executed_block, block_batch_rx).await });

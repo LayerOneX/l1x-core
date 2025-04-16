@@ -16,10 +16,14 @@ use std::{
 use structopt::StructOpt;
 use system::{
 	account::Account, config::Config, node_info::{NodeInfo, NodeInfoSignPayload}, node_health::NodeHealth,
+	block::Block, network::EventBroadcast
 };
 use toml;
 use validator::validator_state::ValidatorState;
 use l1x_node_health::NodeHealthState;
+use execute::execute_block::ExecuteBlock;
+use tokio::sync::broadcast;
+use block::block_state::BlockState;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "init")]
@@ -116,6 +120,7 @@ impl InitCmd {
 
 		genesis_data.set_genesis_block_header(cluster_address.clone(), &db_pool_conn).await.expect("Can't store genesis block head");
 
+
 		// Set the genesis node info
 		Self::set_genesis_node_info(
 			genesis_node_address.clone(),
@@ -131,6 +136,26 @@ impl InitCmd {
 			&genesis_data.data.staking_pool_address,
 		)
 		.await;
+
+		// --- Execute Genesis Block ---
+		println!("Executing genesis block...");
+		let block_state = BlockState::new(&db_pool_conn).await.expect("Failed to get BlockState for genesis execution");
+		let genesis_header = block_state.load_block_header(0, &cluster_address).await.expect("Failed to load genesis block header after setting it");
+		let genesis_block = Block {
+			block_header: genesis_header,
+			transactions: vec![], // Genesis block has no transactions
+		};
+		// Create a dummy event channel as we don't need to broadcast events during init
+		let (event_tx, _) = broadcast::channel::<EventBroadcast>(1);
+		// Store the genesis block first (creates header, meta info, updates head)
+		println!("Storing genesis block...");
+		block_state.store_block(genesis_block.clone()).await.expect("Failed to store genesis block during init");
+		// Now execute the block (updates state, sets meta info flag to true)
+		ExecuteBlock::execute_block(&genesis_block, event_tx, &db_pool_conn)
+			.await
+			.expect("Failed to execute genesis block during init");
+		println!("Genesis block executed successfully.");
+		// --- End Execute Genesis Block ---
 
 		// Serialize the struct to a TOML string
 		let config_str = toml::to_string(&config_data).expect("Failed to serialize config");

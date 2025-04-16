@@ -111,6 +111,7 @@ impl StartCmd {
 			&self.node_type,
             parsed_config.initial_epoch,
             Some(parsed_config.eth_chain_id),
+            parsed_config.mpsc_channel_capacity.clone().unwrap_or_default(),
 		).await;
         // Create a mutex wrapped in an Arc to share across tasks
         let sync_node_guard = Arc::new(RwLock::new(()));
@@ -122,8 +123,9 @@ impl StartCmd {
             eth_chain_id: parsed_config.eth_chain_id,
             rpc_disable_estimate_fee: parsed_config.rpc_disable_estimate_fee,
         };
-        let (mempool_grpc_tx, mempool_grpc_rx) = mpsc::channel(1000);
-        let (mempool_json_tx, mempool_json_rx) = mpsc::channel(1000);
+
+        let (mempool_grpc_tx, mempool_grpc_rx) = mpsc::channel(parsed_config.mpsc_channel_capacity.clone().unwrap_or_default().mempool_grpc);
+        let (mempool_json_tx, mempool_json_rx) = mpsc::channel(parsed_config.mpsc_channel_capacity.clone().unwrap_or_default().mempool_json);
         if self.node_type == NodeType::Full {
             info!("🚀  Server - Starting full node");
             task::spawn(Self::mempool_response(mempool_res_rx, mempool_grpc_tx, mempool_json_tx));
@@ -136,7 +138,8 @@ impl StartCmd {
                                                       boot_nodes,
                                                       cluster_address,
                                                       full_node.node_evm_event_tx,
-                                                      sync_node_guard));
+                                                      sync_node_guard,
+                                                      parsed_config.mpsc_channel_capacity.clone().unwrap_or_default().block_batch));
                 if let Db::Postgres { host, username, password, pool_size, db_name, test_db_name } = parsed_config.db {
                     let database_url = format!(
                         "postgres://{}:{}@{}/{}",
@@ -161,7 +164,7 @@ impl StartCmd {
             service.clone(),
             mempool_grpc_rx,
         ));
-        let json_rpc_task = task::spawn(json_server(parsed_config.jsonrpc_port.clone(), service, mempool_json_rx));
+        let json_rpc_task = task::spawn(json_server(parsed_config.jsonrpc_port.clone(), service, mempool_json_rx, parsed_config.mpsc_channel_capacity.clone().unwrap_or_default()));
 
         // exit when either task finishes
         tokio::select! {
@@ -194,6 +197,7 @@ impl StartCmd {
 									 cluster_address: Address,
 									 event_tx: broadcast::Sender<EventBroadcast>,
 									 sync_node_guard: Arc<RwLock<()>>,
+									 block_batch_mpsc_capacity: usize,
 	) {
         let duration = Duration::from_secs(time_interval);
         // Create a timer that fires at specified intervals
@@ -207,7 +211,7 @@ impl StartCmd {
             // Lock the mutex before writing to the file
             let guard = sync_node_guard.read().await;
             // Sync historical blocks from existing archive/full node
-            match node_crate::sync::sync_node(cluster_address, boot_nodes, event_tx.clone(), batch_size).await {
+            match node_crate::sync::sync_node(cluster_address, boot_nodes, event_tx.clone(), batch_size, block_batch_mpsc_capacity).await {
                 Ok(_) => {
                     info!("✅  Server - Syncing node successful ✅");
                     info!(

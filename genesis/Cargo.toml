@@ -24,5 +24,7 @@ system = { package = 'system', path = '../system', default-features = false }
 block_proposer = { package = 'block_proposer', path = '../block_proposer', default-features = false }
 block = { package = 'block', path = '../block', default-features = false }
 
+system_contracts = { package = 'system_contracts', path = '../system_contracts'}
+
 [lints]
 workspace = true

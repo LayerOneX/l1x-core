@@ -21,6 +21,7 @@ use libp2p::{
 use libp2p_gossipsub::{self as gossipsub, MessageId};
 use log::{debug, error, info, warn};
 use primitives::{Address, Epoch};
+use system::config::MpscConfig;
 use std::io;
 use std::{
     collections::{
@@ -275,6 +276,7 @@ pub async fn new(
     autonat_config: &Option<system::config::AutonatConfig>,
     eth_chain_id: Option<u64>,
     cluster_address: Option<String>,
+	mpsc_channel_capacity: MpscConfig,
 ) -> Result<(Client, mpsc::Receiver<Event>, EventLoop), Box<dyn Error>> {
     // Create a public/private key pair, either random or based on a seed.
     let local_peer_id = local_keys.public().to_peer_id();
@@ -373,8 +375,8 @@ pub async fn new(
         SwarmBuilder::with_tokio_executor(transport, behaviour, local_peer_id).build()
     };
 
-    let (command_sender, command_receiver) = mpsc::channel(1000);
-    let (event_sender, event_receiver) = mpsc::channel(1000);
+    let (command_sender, command_receiver) = mpsc::channel(mpsc_channel_capacity.command);
+    let (event_sender, event_receiver) = mpsc::channel(mpsc_channel_capacity.event);
     let client = Client {
         sender: command_sender,
         event_sender: event_sender.clone(),

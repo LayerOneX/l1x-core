@@ -18,18 +18,7 @@ use std::{
 use std::str::FromStr;
 use anyhow::Error;
 use system::{
-	account::Account, 
-	block::{Block, BlockBroadcast, BlockQueryRequest, L1xResponse, QueryBlockResponse}, 
-	block_proposer::BlockProposerBroadcast, 
-	dht_health_storage::DHTHealthStorage, 
-	mempool::{ProcessMempool, ResponseMempool}, 
-	network::{BroadcastNetwork, EventBroadcast, NetworkMessage}, 
-	node_health::{AggregatedNodeHealthBroadcast, NodeHealthBroadcast}, 
-	node_info::{NodeInfoBroadcast, NodeInfoSignPayload}, 
-	transaction::TransactionBroadcast, 
-	vote::VoteBroadcast, 
-	vote_result::VoteResultBroadcast,
-	block::BroadcastNodeDetailedStatus
+	account::Account, block::{Block, BlockBroadcast, BlockQueryRequest, BroadcastNodeDetailedStatus, L1xResponse, QueryBlockResponse}, block_proposer::BlockProposerBroadcast, config::MpscConfig, dht_health_storage::DHTHealthStorage, mempool::{ProcessMempool, ResponseMempool}, network::{BroadcastNetwork, EventBroadcast, NetworkMessage}, node_health::{AggregatedNodeHealthBroadcast, NodeHealthBroadcast}, node_info::{NodeInfoBroadcast, NodeInfoSignPayload}, transaction::TransactionBroadcast, vote::VoteBroadcast, vote_result::VoteResultBroadcast
 };
 use tokio::{
 	sync::{broadcast, mpsc, Mutex},
@@ -128,6 +117,7 @@ impl <'a> FullNode {
 		node_type: &NodeType,
 		initial_epoch_config: Option<InitialEpochConfig>,
 		eth_chain_id: Option<u64>,
+		mpsc_channel_capacity: MpscConfig,
 	) -> (FullNode, mpsc::Receiver<ResponseMempool>) {
 		let server_info = format!(r#"
         _     __        _   _           _
@@ -162,6 +152,7 @@ impl <'a> FullNode {
 		};
 		info!("ℹ️ \n| 🛠️ DEV MODE: {}        |\n| 🌐 MULTINODE MODE: {} |\n", dev_mode_enabled, multinode_mode_enabled);
 
+		debug!(" Default MPSCCapacity: {:?}", mpsc_channel_capacity);
 
 		let node_private_key = match node_priv_key.clone() {
 			Some(node_private_key) => node_private_key,
@@ -202,16 +193,16 @@ impl <'a> FullNode {
 		let db_pool_conn =
 			Database::get_pool_connection().await.expect("🚨 Node - Database | Unable to get db_pool_conn");
 
-		let (mempool_res_tx, mempool_res_rx) = mpsc::channel(1000);
-		let (mempool_tx, mempool_rx) = mpsc::channel(1000);
-		let (network_client_tx, network_client_rx) = mpsc::channel(10_000);
-		let (network_receive_tx, network_receive_rx) = mpsc::channel(10_000);
-		let (timer_tx, timer_rx) = mpsc::channel(1);
+		let (mempool_res_tx, mempool_res_rx) = mpsc::channel(mpsc_channel_capacity.mempool_res);
+		let (mempool_tx, mempool_rx) = mpsc::channel(mpsc_channel_capacity.mempool);
+		let (network_client_tx, network_client_rx) = mpsc::channel(mpsc_channel_capacity.network_client);
+		let (network_receive_tx, network_receive_rx) = mpsc::channel(mpsc_channel_capacity.network_receive);
+		let (timer_tx, timer_rx) = mpsc::channel(mpsc_channel_capacity.timer);
 		// EVM (and maybe L1XVM) events are written to the sender channel.
 		// let (event_tx, event_rx) = mpsc::channel(1000);
-		let (event_tx, _) = broadcast::channel(1000);
+		let (event_tx, _) = broadcast::channel(mpsc_channel_capacity.event);
 		// For L1XVM events
-		let (node_event_tx, _) = broadcast::channel(32);
+		let (node_event_tx, _) = broadcast::channel(mpsc_channel_capacity.node_event);
 
 		let ip_address = "127.0.0.1".as_bytes().to_vec();
 		let metadata = "metadata".as_bytes().to_vec();
@@ -227,7 +218,7 @@ impl <'a> FullNode {
 		if *node_type == NodeType::Full {
 			info!("🚀 Node - Starting full node");
 			let (mut network_client, event_receiver, event_loop) =
-				network::new(node_keypair.clone(), bootnodes, dht_health_storage, autonat_config, eth_chain_id, Some(hex::encode(cluster_address.clone())))
+				network::new(node_keypair.clone(), bootnodes, dht_health_storage, autonat_config, eth_chain_id, Some(hex::encode(cluster_address.clone())), mpsc_channel_capacity.clone())
 					.await
 					.expect("🚨 Node - Network | Network to be created");
 
@@ -263,7 +254,7 @@ impl <'a> FullNode {
 			// Only sync when in multinode mode
 			if multinode_mode && !bootnodes.is_empty() {
 				let sync_start_time = Instant::now();
-				match sync_node(cluster_address, bootnodes, event_tx.clone(), 500).await {
+				match sync_node(cluster_address, bootnodes, event_tx.clone(), 500, mpsc_channel_capacity.block_batch).await {
 					Ok(_) => {
 						info!("🔍 Node - Syncing | Node synced successfully ✅");
 						info!(
@@ -296,7 +287,7 @@ impl <'a> FullNode {
 				// they are not synced on the prevoius step and not cached by p2p
 				info!("🔍 Node - Syncing | Sync node one more time");
 				let sync_start_time = Instant::now();
-				match sync_node(cluster_address, bootnodes, event_tx.clone(), 500).await {
+				match sync_node(cluster_address, bootnodes, event_tx.clone(), 500, mpsc_channel_capacity.block_batch).await {
 					Ok(_) => {
 						info!("🔍 Node - Syncing | Syncing node successful ✅");
 						info!(
@@ -1729,15 +1720,18 @@ async fn try_get_block_proposer(
     
     for attempt in 0..3 {
         match grpc_client.get_block_proposer_for_epoch(request.clone()).await {
-            Ok(response) => return Some(response.into_inner()),
+            Ok(response) => {
+				debug!("🔍 ℹ️ 🔗 Node - Try Get Block Proposer | Got block proposer from {} for epoch {}", endpoint, epoch);
+				return Some(response.into_inner());
+            },
             Err(e) => {
                 if attempt < 2 {
                     // Simple backoff: wait longer for each retry
                     let delay = (attempt + 1) * 1000;
                     tokio::time::sleep(Duration::from_millis(delay as u64)).await;
-                    warn!("Failed to get block proposer from {} (retry {}/3): {}", endpoint, attempt + 1, e);
+                    warn!("🔍 ℹ️ 🔗 Node - Try Get Block Proposer | Failed to get block proposer from {} for epoch {} (retry {}/3): {}", endpoint, epoch, attempt + 1, e);
                 } else {
-                    warn!("Failed to get block proposer from {} after 3 attempts: {}", endpoint, e);
+                    warn!("🔍 ℹ️ 🔗 Node - Try Get Block Proposer | Failed to get block proposer from {} for epoch {} after 3 attempts: {}", endpoint, epoch, e);
                 }
             }
         }

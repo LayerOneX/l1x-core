@@ -38,7 +38,6 @@ jsonrpc_port = "0.0.0.0:50051"
 validator_pool_address = "522b3294fe78d57a1d7e1c37393f11841f6a9494"
 
 
-
 [grpc]
 block_cache_capacity = 7200
 

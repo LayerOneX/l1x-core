@@ -10,10 +10,12 @@ use db_traits::{base::BaseState, block_proposer::BlockProposerState};
 use diesel::sql_types::Numeric;
 
 use diesel::{self, prelude::*, QueryResult};
+// use diesel::result::Error as DieselError;
 use primitives::{Address, Epoch};
 use std::collections::HashMap;
 use system::block_proposer::BlockProposer;
 use util::convert::convert_to_big_decimal_epoch;
+use log::debug;
 
 pub struct StatePg<'a> {
 	pub(crate) pg: &'a PostgresDBConn<'a>,
@@ -113,6 +115,7 @@ impl<'a> BlockProposerState for StatePg<'a> {
 	) -> Result<(), Error> {
 		let new_blk_proposer = BlockProposer { cluster_address, address, epoch };
 		self.create(&new_blk_proposer).await?;
+		debug!("New block proposer created successfully.");
 		Ok(())
 	}
 
@@ -243,7 +246,6 @@ impl<'a> BlockProposerState for StatePg<'a> {
 		_epoch: Epoch,
 	) -> Result<Option<BlockProposer>, Error> {
 		use db::postgres::schema::block_proposer::dsl::*;
-		// Implementation for set_schema_version method
 		let encoded_cluster_address = hex::encode(cluster_addr);
 		let current_epoch = convert_to_big_decimal_epoch(_epoch);
 		let res: QueryResult<QueryBlockProposer> = match &self.pg.conn {
@@ -268,32 +270,31 @@ impl<'a> BlockProposerState for StatePg<'a> {
 					Some(u64_val) => u64_val,
 					None => return Err(anyhow::anyhow!("Failed to convert BigDecimal to u64")),
 				};
-				let mut cluster_addr: Address = [0; 20];
-				let mut bp_address: Address = [0; 20];
+				let mut cluster_addr_bytes: Address = [0; 20];
+				let mut bp_address_bytes: Address = [0; 20];
 
 				let cluster = hex::decode(&results.cluster_address.clone())?;
 				if cluster.len() == 20 {
-					let mut array = [0u8; 20];
-					array.copy_from_slice(&cluster);
-					cluster_addr = array;
+					cluster_addr_bytes.copy_from_slice(&cluster);
+				} else {
+					return Err(anyhow::anyhow!("Invalid cluster address length from DB"));
 				}
 
 				let addr = hex::decode(&results.address.clone())?;
 				if addr.len() == 20 {
-					let mut array = [0u8; 20];
-					array.copy_from_slice(&addr);
-					bp_address = array;
+					bp_address_bytes.copy_from_slice(&addr);
+				} else {
+					return Err(anyhow::anyhow!("Invalid proposer address length from DB"));
 				}
+				
 				let block_proposer_data = BlockProposer {
-					cluster_address: cluster_addr,
-					address: bp_address,
+					cluster_address: cluster_addr_bytes,
+					address: bp_address_bytes,
 					epoch: epoch_u64,
 				};
 				Ok(Some(block_proposer_data))
 			},
-			Err(e) => {
-				return Err(anyhow::anyhow!("Diesel query failed: {}", e))
-			},
+			Err(e) => Err(anyhow::anyhow!(e)),
 		}
 	}
 

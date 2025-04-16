@@ -539,6 +539,12 @@ impl<'a> Mempool {
 		block_number: BlockNumber,
 		db_pool_conn: &'a DbTxConn<'a>
 	) -> Result<Vec<Transaction>, Error> {
+		// Skip rewards for Genesis Block (0) and the block immediately after (1)
+		if block_number <= 1 {
+			debug!("💼 Mempool - Build Reward TXs - Skipping rewards for genesis block or block 1 (Block #{})", block_number);
+			return Ok(vec![]);
+		}
+
 		let rt_config = runtime_config::RuntimeConfigCache::get().await?;
 		let reward_amount = rt_config.rewards.validated_block_reward;
 		if reward_amount.0 == 0 {

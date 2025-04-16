@@ -13,6 +13,11 @@ use std::{fmt, time::SystemTime};
 
 use system::{block_header::BlockHeader, block_proposer::BlockProposer, validator::Validator};
 
+use system_contracts::{default_genesis_attributes::{DEFAULT_BLOCK_PROPOSER_ADDRESS, DEFAULT_STAKING_POOL_ADDRESS, DEFAULT_VALIDATOR_1_ADDRESS, DEFAULT_VALIDATOR_2_ADDRESS, DEFAULT_VALIDATOR_3_ADDRESS}, CLUSTER_ADDRESS};
+
+
+
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChainType {
 	Mainnet,
@@ -159,7 +164,7 @@ impl<'a> Genesis {
 			minimum_fee: 1_000,
 			accounts: vec![],
 			validators: vec![],
-			staking_pool_address: [0u8; 20],
+			staking_pool_address: DEFAULT_STAKING_POOL_ADDRESS,
 		};
 
 		let mut genesis = Genesis { data: genesis_data };
@@ -172,10 +177,7 @@ impl<'a> Genesis {
 
 		genesis.data.accounts = addresses;
 		genesis.data.validators = genesis_validators;
-		genesis.data.staking_pool_address = hex::decode("522b3294fe78d57a1d7e1c37393f11841f6a9494")
-			.expect("Unable to decode")
-			.try_into()
-			.expect("Wrong length of Vec");
+		genesis.data.staking_pool_address = DEFAULT_STAKING_POOL_ADDRESS;
 		genesis
 	}
 	pub fn genesis_time(&self) -> SystemTime {
@@ -189,10 +191,7 @@ impl<'a> Genesis {
 		_address: Address,
 		db_pool_conn: &'a DbTxConn<'a>,
 	) -> BlockProposer {
-		let address: Address = hex::decode("78e044394595d4984f66c1b19059bc14ecc24063")
-			.expect("Unable to decode")
-			.try_into()
-			.expect("Wrong length of Vec");
+		let address: Address = 	DEFAULT_BLOCK_PROPOSER_ADDRESS;
 		let block_proposer: BlockProposer =
 			BlockProposer { cluster_address, epoch, address };
 
@@ -230,7 +229,7 @@ impl<'a> Genesis {
 			num_transactions: 0,
 			block_version: 0,
 			state_hash: BlockHash::default(),
-			epoch: 1
+			epoch: 0
 		};
 		block_state.store_block_header(block_header.clone()).await?;
 		block_state.update_block_head(block_header.cluster_address, block_header.block_number, block_header.block_hash).await?;
@@ -244,24 +243,19 @@ impl<'a> Genesis {
 		let mut genesis_accounts: Vec<GenesisAccount> = Vec::new();
 
 		let l1x_validator_1_account: String =
-			"78e044394595d4984f66c1b19059bc14ecc24063".to_string();
+			hex::encode(DEFAULT_VALIDATOR_1_ADDRESS);
 		let l1x_validator_2_account: String =
-			"7b7ab20f75b691e90c546e89e41aa23b0a821444".to_string();
+			hex::encode(DEFAULT_VALIDATOR_2_ADDRESS);
+		let l1x_validator_3_account: String =
+			hex::encode(DEFAULT_VALIDATOR_3_ADDRESS);
 
-		let l1x_dev_1_account: String = "75104938baa47c54a86004ef998cc76c2e616289".to_string();
-		let l1x_dev_2_account: String = "50028cf7ed245e4ac9e472d5277f14ed1c7ab384".to_string();
-		let l1x_dev_3_account: String = "4489da9d81f0bc8125c8efdda1c117a7a895b43d".to_string();
-		let l1x_dev_4_account: String = "3b647b46c9ba4fca221ccf933c09b653c2b4581f".to_string();
+		let l1x_dev_1_account: String = hex::encode(DEFAULT_VALIDATOR_1_ADDRESS);
+		let l1x_dev_2_account: String = hex::encode(DEFAULT_VALIDATOR_2_ADDRESS);
+		let l1x_dev_3_account: String = hex::encode(DEFAULT_VALIDATOR_3_ADDRESS);
 
 		account_addresses.push(("Genesis Validator 1".to_string(), l1x_validator_1_account));
 		account_addresses.push(("Genesis Validator 2".to_string(), l1x_validator_2_account));
-
-		if dev_mode {
-			account_addresses.push(("L1X Dev 1 Account".to_string(), l1x_dev_1_account));
-			account_addresses.push(("L1X Dev 2 Account".to_string(), l1x_dev_2_account));
-			account_addresses.push(("L1X Dev 3 Account".to_string(), l1x_dev_3_account));
-			account_addresses.push(("L1X Dev 4 Account".to_string(), l1x_dev_4_account));
-		}
+		account_addresses.push(("Genesis Validator 3".to_string(), l1x_validator_3_account));
 
 		// Genesis account
 		let genesis_account = GenesisAccount {
@@ -336,30 +330,31 @@ impl<'a> Genesis {
 
 	pub fn validators(&self) -> Vec<GenesisValidator> {
 		let genesis_validator1 = GenesisValidator {
-			// address: "78e044394595d4984f66c1b19059bc14ecc24063".to_string(),
-			address: hex::decode("78e044394595d4984f66c1b19059bc14ecc24063")
-				.expect("Unable to decode")
-				.try_into()
-				.expect("Wrong length of Vec"),
+			address: DEFAULT_VALIDATOR_1_ADDRESS,
 			epoch: 0,
-			cluster_address: [1u8; 20],
+			cluster_address: CLUSTER_ADDRESS,
 			stake: 100_000u128,
 			xscore: Some(1.0)
 		};
 
 		let genesis_validator2 = GenesisValidator {
-			address: hex::decode("7b7ab20f75b691e90c546e89e41aa23b0a821444")
-				.expect("Unable to decode")
-				.try_into()
-				.expect("Wrong length of Vec"),
+			address: DEFAULT_VALIDATOR_2_ADDRESS,
 			epoch: 0,
-			cluster_address: [1u8; 20],
+			cluster_address: CLUSTER_ADDRESS,
+			stake: 100_000u128,
+			xscore: Some(1.0)
+		};
+
+		let genesis_validator3 = GenesisValidator {	
+			address: DEFAULT_VALIDATOR_3_ADDRESS,
+			epoch: 0,
+			cluster_address: CLUSTER_ADDRESS,
 			stake: 100_000u128,
 			xscore: Some(1.0)
 		};
 
 		// Create a Vec and populate it
-		let validators = vec![genesis_validator1, genesis_validator2];
+		let validators = vec![genesis_validator1, genesis_validator2, genesis_validator3];
 
 		validators
 	}

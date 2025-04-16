@@ -86,6 +86,48 @@ pub enum Db {
 	}
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MpscConfig {	
+	pub mempool_grpc: usize,
+	pub mempool_json: usize,
+	pub mempool_evm_json: usize,
+	pub mempool_res: usize,
+	pub mempool: usize,
+	pub network_client: usize,
+	pub network_receive: usize,
+	pub timer: usize,
+	pub event: usize,
+	pub node_event: usize,
+	pub block_batch: usize,
+	pub command: usize,
+	pub node_evm_event: usize,
+	pub log: usize,
+	pub tx: usize,
+
+}
+
+impl Default for MpscConfig {
+	fn default() -> Self {
+		Self { 
+			mempool_grpc: 1000, 
+			mempool_json: 1000,
+			mempool_evm_json: 1000,
+			mempool_res: 1000,
+			mempool: 1000,
+			network_client: 10_000,
+			network_receive: 10_000,
+			timer: 1,
+			event: 1000,
+			node_event: 32,
+			block_batch: 10_000,
+			command: 1000,
+			node_evm_event: 32,
+			log: 32,
+			tx: 4,
+		}
+	}
+}
+
 /// Startup configuration for running an L1X node
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -126,6 +168,7 @@ pub struct Config {
 	#[serde(default = "default_sync_config")]
 	pub sync: SyncConfig,
 	pub db: Db,
+	pub mpsc_channel_capacity: Option<MpscConfig>,
 }
 
 impl Default for Config {
@@ -179,6 +222,7 @@ impl Default for Config {
 			grpc: default_config.grpc,
 			sync: default_config.sync,
 			db: default_config.db,
+			mpsc_channel_capacity: default_config.mpsc_channel_capacity,
 		}
 	}
 }

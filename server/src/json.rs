@@ -49,7 +49,7 @@ use secp256k1::
 use serde_json::{json, Value};
 use util::convert::u256_to_balance;
 use std::net::SocketAddr;
-use system::{errors::NodeError, network::EventBroadcast, access, contract as Contract, transaction::TransactionType, transaction::Transaction as SystemTransaction};
+use system::{access, config::MpscConfig, contract as Contract, errors::NodeError, network::EventBroadcast, transaction::{Transaction as SystemTransaction, TransactionType}};
 use tokio::{
 	sync::{broadcast, broadcast::error::RecvError, mpsc},
 	task, time,
@@ -1849,6 +1849,7 @@ pub async fn run_server(
 	address: String,
 	service: FullNodeService,
 	mempool_res_rx: mpsc::Receiver<ResponseMempool>,
+	mpsc_channel_capacity: MpscConfig,
 ) -> anyhow::Result<SocketAddr> {
 	// Add a CORS middleware for handling HTTP requests.
 	// This middleware does affect the response, including appropriate
@@ -1877,8 +1878,8 @@ pub async fn run_server(
 
 	info!("JSON RPC on {}", addr);
 
-	let (mempool_json_evm_tx, mempool_json_evm_rx) = mpsc::channel(1000);
-	let (mempool_json_tx, mempool_json_rx) = mpsc::channel(1000);
+	let (mempool_json_evm_tx, mempool_json_evm_rx) = mpsc::channel(mpsc_channel_capacity.mempool_evm_json);
+	let (mempool_json_tx, mempool_json_rx) = mpsc::channel(mpsc_channel_capacity.mempool_json);
 
 	let rpc_server_evm_impl =
 		FullNodeJsonImpl { service: service.clone(), mempool_json_rx: mempool_json_evm_rx };
