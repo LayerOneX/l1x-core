@@ -319,7 +319,7 @@ mod tests {
 			.to_vec();
 
 		if let Err(error) = block_proposer_manager
-			.select_block_proposers(pool_address, block_proposer.clone(), block_number, &db_pool_conn,  n)
+			.select_block_proposers(pool_address, block_proposer.clone(), block_number, &db_pool_conn)
 			.await
 		{
 			println!("Error selecting block proposers: {:?}", error);

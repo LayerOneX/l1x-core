@@ -107,3 +107,4 @@ debug.log
 chain_data/*
 config.toml
 update.txt
+debug-*.log

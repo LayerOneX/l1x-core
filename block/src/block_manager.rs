@@ -12,7 +12,7 @@ use system::{
 	transaction::Transaction,
 	config::Config,
 };
-use util::generic::current_timestamp_in_secs;
+// use util::generic::current_timestamp_in_secs;
 use compile_time_config::{BLOCK_VERSION, config::SLOTS_PER_EPOCH};
 use lazy_static::lazy_static;
 use parking_lot::RwLock;
@@ -81,8 +81,9 @@ impl<'a> BlockManager {
 		cluster_address: Address,
 		block_state: &BlockState<'a>,
 		account_state: &AccountState<'a>,
+		timestamp: u64,
 	) -> Result<Block, Error> {
-		self.create_block(transactions, cluster_address, block_state, account_state, BlockType::L1XTokenBlock).await
+		self.create_block(transactions, cluster_address, block_state, account_state, BlockType::L1XTokenBlock, timestamp).await
 	}
 
 	pub async fn create_system_block(&self,
@@ -90,8 +91,9 @@ impl<'a> BlockManager {
 		cluster_address: Address,
 		block_state: &BlockState<'a>,
 		account_state: &AccountState<'a>,
+		timestamp: u64,
 	) -> Result<Block, Error> {
-		self.create_block(transactions, cluster_address, block_state, account_state, BlockType::SystemBlock).await
+		self.create_block(transactions, cluster_address, block_state, account_state, BlockType::SystemBlock, timestamp).await
 	}
 
 	async fn create_block(
@@ -101,6 +103,7 @@ impl<'a> BlockManager {
 		block_state: &BlockState<'a>,
 		account_state: &AccountState<'a>,
 		block_type: BlockType,
+		timestamp: u64,
 	) -> Result<Block, Error> {
 		let transactions = self.validate_nonce(transactions, account_state).await?;
 		// Load the last block header
@@ -109,7 +112,6 @@ impl<'a> BlockManager {
 				Ok(lbh) => lbh,
 				Err(_e) => BlockHeader::default(),
 			};
-		let timestamp = current_timestamp_in_secs()?;
 		let block_number = last_block_header.block_number + 1;
 
 		// Determine the current epoch
@@ -198,6 +200,11 @@ impl<'a> BlockManager {
 		}
 		let current_epoch = block_number / SLOTS_PER_EPOCH;
 		Ok(current_epoch as Epoch)
+	}
+
+	pub fn calculate_nth_block_in_epoch(&self, nth_block_in_epoch: u32, epoch: Epoch) -> Result<BlockNumber, Error> {
+		let epoch_start_slot = self.get_epoch_start_slot(epoch)?;
+		Ok(epoch_start_slot + nth_block_in_epoch as BlockNumber)
 	}
 
 	pub fn get_epoch_start_slot(&self, epoch: Epoch) -> Result<BlockNumber, Error> {

@@ -20,7 +20,7 @@ impl<'a> BlockProposerManager {
 		db_pool_conn: &'a DbTxConn<'a>,
 	) -> Result<Address, Error> {
 		let mut eligible_validators = validators;
-		let seed = ValidatorManager.calculate_seed(block_header.block_hash, epoch);
+		let seed = ValidatorManager.calculate_seed(block_header.block_number, epoch);
 		
 		debug!("🤝 Consensus | Block #{} | Epoch {} | Proposer Selection | Seed: {}", block_header.block_number, epoch, seed);
 		let mut cluster_block_proposers = HashMap::new();
@@ -35,7 +35,27 @@ impl<'a> BlockProposerManager {
 		debug!("🤝 Consensus | Block #{} | Epoch {} | Proposer Selection | Proposer Index: {}", block_header.block_number, epoch, proposer_index);
 
 		let block_proposer_state = BlockProposerState::new(db_pool_conn).await?;
-		block_proposer_state.upsert_block_proposer(block_header.cluster_address, epoch, selected_address).await?;
+
+		// Check if the proposer is already in the database
+		let proposer_exists_for_epoch = match block_proposer_state.load_block_proposer(block_header.cluster_address, epoch).await{
+			Ok(Some(proposer)) => {
+				true
+			},
+			Ok(None) => {
+				false
+			},
+			Err(e) => {
+				false
+			}
+		};
+
+		if proposer_exists_for_epoch {
+			debug!("🤝 Consensus | Block #{} | Epoch {} | Proposer Selection | Proposer already exists", block_header.block_number, epoch);
+			return Ok(selected_address);
+		}
+		
+
+		block_proposer_state.store_block_proposer(block_header.cluster_address, epoch, selected_address).await?;
 		Ok(selected_address)
 	}
 	

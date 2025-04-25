@@ -100,3 +100,59 @@ compile_error!("\"testnet\" and \"devnet\" features can't be enabled at the same
 
 #[cfg(all(feature = "mainnet", feature = "devnet"))]
 compile_error!("\"mainnet\" and \"devnet\" features can't be enabled at the same time");
+
+
+#[cfg(not(any(feature = "testnet", feature = "devnet")))]
+pub mod network_namespace {
+	pub const NETWORK_NAMESPACE_ID: &str = "mainnet-d310d666d3c35201044b1";
+}
+
+#[cfg(feature = "testnet")]
+pub mod network_namespace {
+	pub const NETWORK_NAMESPACE_ID: &str = "testnet-80a11efa9d8c5b3a94934";
+}
+
+#[cfg(feature = "devnet")]
+pub mod network_namespace {
+	pub const NETWORK_NAMESPACE_ID: &str = "devnet-f95f8a887cf1521302693";
+}
+
+
+#[cfg(not(any(feature = "testnet", feature = "devnet")))] // Corresponds to mainnet
+pub mod p2p_topics {
+	pub const NODE_INFO_TOPIC: &str = "mainnet-d310d666d3c35201044b1:node_join";
+	pub const TRANSACTIONS_TOPIC: &str = "mainnet-d310d666d3c35201044b1:transactions";
+	pub const BLOCKS_VALIDATE_TOPIC: &str = "mainnet-d310d666d3c35201044b1:blocks_validate";
+	pub const BLOCK_PROPOSER_TOPIC: &str = "mainnet-d310d666d3c35201044b1:block_proposers";
+	pub const VOTE_TOPIC: &str = "mainnet-d310d666d3c35201044b1:vote";
+	pub const VOTE_RESULT_TOPIC: &str = "mainnet-d310d666d3c35201044b1:vote_result";
+	pub const NODE_HEALTH_TOPIC: &str = "mainnet-d310d666d3c35201044b1:node_health";
+	pub const AGGREGATED_NODE_HEALTH_TOPIC: &str = "mainnet-d310d666d3c35201044b1:aggregate_node_health";
+	pub const BROADCAST_NODE_DETAILED_STATUS_TOPIC: &str = "mainnet-d310d666d3c35201044b1:broadcast_node_detailed_status";
+}
+
+#[cfg(feature = "testnet")]
+pub mod p2p_topics {
+	pub const NODE_INFO_TOPIC: &str = "testnet-80a11efa9d8c5b3a94934:node_join";
+	pub const TRANSACTIONS_TOPIC: &str = "testnet-80a11efa9d8c5b3a94934:transactions";
+	pub const BLOCKS_VALIDATE_TOPIC: &str = "testnet-80a11efa9d8c5b3a94934:blocks_validate";
+	pub const BLOCK_PROPOSER_TOPIC: &str = "testnet-80a11efa9d8c5b3a94934:block_proposers";
+	pub const VOTE_TOPIC: &str = "testnet-80a11efa9d8c5b3a94934:vote";
+	pub const VOTE_RESULT_TOPIC: &str = "testnet-80a11efa9d8c5b3a94934:vote_result";
+	pub const NODE_HEALTH_TOPIC: &str = "testnet-80a11efa9d8c5b3a94934:node_health";
+	pub const AGGREGATED_NODE_HEALTH_TOPIC: &str = "testnet-80a11efa9d8c5b3a94934:aggregate_node_health";
+	pub const BROADCAST_NODE_DETAILED_STATUS_TOPIC: &str = "testnet-80a11efa9d8c5b3a94934:broadcast_node_detailed_status";
+}
+
+#[cfg(feature = "devnet")]
+pub mod p2p_topics {
+	pub const NODE_INFO_TOPIC: &str = "devnet-f95f8a887cf1521302693:node_join";
+	pub const TRANSACTIONS_TOPIC: &str = "devnet-f95f8a887cf1521302693:transactions";
+	pub const BLOCKS_VALIDATE_TOPIC: &str = "devnet-f95f8a887cf1521302693:blocks_validate";
+	pub const BLOCK_PROPOSER_TOPIC: &str = "devnet-f95f8a887cf1521302693:block_proposers";
+	pub const VOTE_TOPIC: &str = "devnet-f95f8a887cf1521302693:vote";
+	pub const VOTE_RESULT_TOPIC: &str = "devnet-f95f8a887cf1521302693:vote_result";
+	pub const NODE_HEALTH_TOPIC: &str = "devnet-f95f8a887cf1521302693:node_health";
+	pub const AGGREGATED_NODE_HEALTH_TOPIC: &str = "devnet-f95f8a887cf1521302693:aggregate_node_health";
+	pub const BROADCAST_NODE_DETAILED_STATUS_TOPIC: &str = "devnet-f95f8a887cf1521302693:broadcast_node_detailed_status";
+}

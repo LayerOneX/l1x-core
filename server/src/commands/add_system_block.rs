@@ -20,6 +20,7 @@ use system_contracts::{
     MULTISIG_CONTRACT_CODE_ADDRESS, MULTISIG_CONTRACT_INSTANCE_ADDRESS, NODE_REGISTRY_CONTRACT_CODE_ADDRESS,
     NODE_REGISTRY_CONTRACT_INSTANCE_ADDRESS, STAKING_CONTRACT_CODE_ADDRESS, STAKING_CONTRACT_INSTANCE_ADDRESS,
 };
+use util::generic::current_timestamp_in_secs;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "add-system-block")]
@@ -358,7 +359,8 @@ async fn add_system_block<'a>(cluster_address: &Address, db_pool_conn: &'a db::d
     });
 
     let block_state = BlockState::new(&db_pool_conn).await?;
-    let block = block_manager.create_system_block(transactions, *cluster_address, &block_state, &account_state).await?;
+    let timestamp = current_timestamp_in_secs()?;
+    let block = block_manager.create_system_block(transactions, *cluster_address, &block_state, &account_state, timestamp).await?;
 	let block_number = block.block_header.block_number;
 	let block_hash = block.block_header.block_hash;
 

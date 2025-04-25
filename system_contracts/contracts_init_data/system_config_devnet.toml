@@ -3,19 +3,21 @@ version = 1
 [version_1]
 # org_nodes should be greater or equal to 2
 org_nodes = [
-    "78e044394595d4984f66c1b19059bc14ecc24063",
-    "7b7ab20f75b691e90c546e89e41aa23b0a821444",
+    "bdba6171ff1f7fe74c20acd40c55ba26cdf4310a",
+    "451535eb42068d42f41873413e6f7ae7dc56c6af",
+    "a579df673ee67cb0abb6bd3cf9f5b2e2bfc45e33"
 ]
 # Validators will be selected from this list
 whitelisted_nodes = [
-    "78e044394595d4984f66c1b19059bc14ecc24063",
-    "7b7ab20f75b691e90c546e89e41aa23b0a821444",
-    "4489da9d81f0bc8125c8efdda1c117a7a895b43d",
+    "bdba6171ff1f7fe74c20acd40c55ba26cdf4310a",
+    "451535eb42068d42f41873413e6f7ae7dc56c6af",
+    "a579df673ee67cb0abb6bd3cf9f5b2e2bfc45e33",
 ]
 # block proposers will be selected from this list (these nodes should be present in the whitelisted_nodes)
 whitelisted_block_proposers = [
-    "78e044394595d4984f66c1b19059bc14ecc24063",
-    "7b7ab20f75b691e90c546e89e41aa23b0a821444",
+    "bdba6171ff1f7fe74c20acd40c55ba26cdf4310a",
+    "451535eb42068d42f41873413e6f7ae7dc56c6af",
+    "a579df673ee67cb0abb6bd3cf9f5b2e2bfc45e33",
 ]
 max_validators = 13
 #blacklisted_block_proposers = []

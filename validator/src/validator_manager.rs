@@ -180,7 +180,7 @@ impl<'a> ValidatorManager {
 		let max_validators = std::cmp::max(rt_config.max_validators, DEFAULT_MAX_VALIDATORS) as usize;
 
 		// Calculate seed for shuffling
-		let seed = self.calculate_seed(last_block_header.block_hash, epoch);
+		let seed = self.calculate_seed(last_block_header.block_number, epoch);
 		let mut rng = StdRng::seed_from_u64(seed);
 
 		// Shuffle the final selected validators and org nodes
@@ -288,9 +288,9 @@ impl<'a> ValidatorManager {
 		self.blocks_to_days(block_count_since_stake_creation).await
 	}
 
-	pub fn calculate_seed(&self, last_block_hash: [u8; 32], current_epoch: u64) -> u64 {
+	pub fn calculate_seed(&self, last_block_number: u128, current_epoch: u64) -> u64 {
 		let mut hasher = Sha256::new();
-		hasher.update(last_block_hash);
+		hasher.update(last_block_number.to_be_bytes());
 		hasher.update(current_epoch.to_be_bytes());
 		let result = hasher.finalize();
 

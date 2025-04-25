@@ -421,6 +421,7 @@ impl<'a> Mempool {
 		secret_key: SecretKey,
 		verifying_key: PublicKey,
 		network_receive_tx: mpsc::Sender<NetworkMessage>,
+		block_time: u128,
 	) -> Result<ProposeBlockResult, Error> {
 		let mut block_proposer_manager = BlockProposerManager {};
 		let block_manager = BlockManager{};
@@ -442,6 +443,13 @@ impl<'a> Mempool {
 			}
 		};
 		
+		// Check if a block header for this number ALREADY exists in the DB
+		// This prevents proposing again if a previous attempt succeeded but hasn't finalized
+		if block_state.is_block_header_stored(block_number).await? {
+			warn!("💼 ⚠️ Mempool - Propose Block - Block header for #{} already exists in store. Skipping proposal.", block_number);
+			return Ok(ProposeBlockResult::NotProposed);
+		}
+
 		let current_epoch = block_manager.calculate_current_epoch(block_number)?;
 		let block_proposer = block_proposer_manager.get_block_proposer_for_epoch(block_number, self.cluster_address, current_epoch, db_pool_conn).await?;
 
@@ -461,6 +469,18 @@ impl<'a> Mempool {
 		let account_state = AccountState::new(&db_pool_conn).await?;
 		let mut transactions_to_be_included = self.build_new_block_transactions_list(&account_state).await?;
 		transactions_to_be_included.extend(reward_txs);
+
+		// <<< Generate timestamp ONCE before creating the block >>>
+		// let timestamp = current_timestamp_in_secs()?;
+		let previous_block_timestamp = block_header.timestamp;
+		let block_time_seconds = block_time / 1000;
+		let timestamp = previous_block_timestamp.saturating_add(block_time_seconds as u64);
+
+		if timestamp <= previous_block_timestamp {
+			warn!("💼 ⚠️ Mempool -  Propose Block - Timestamp is less than previous block timestamp: {}", timestamp);
+			return Ok(ProposeBlockResult::NotProposed);
+		}
+
 		let block_state = BlockState::new(&db_pool_conn).await?;
 		let block_manager = BlockManager::new();
 		let block = block_manager
@@ -469,6 +489,7 @@ impl<'a> Mempool {
 				self.cluster_address,
 				&block_state,
 				&account_state,
+				timestamp, // <<< Pass generated timestamp here
 			)
 			.await?;
 

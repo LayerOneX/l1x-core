@@ -33,7 +33,9 @@ use system::validator::Validator;
 use validate::validate_block::ValidateBlock;
 use validate::validate_vote_result::ValidateVoteResult;
 use vote_result::vote_result_state::VoteResultState;
-const PENDING_BLOCK_EXPIRATION_TIME: u128 = 20 * 1000; //ms , 20 seconds
+// use std::time::{SystemTime,UNIX_EPOCH};
+// const PENDING_BLOCK_EXPIRATION_TIME: u128 = 20 * 1000; //ms , 20 seconds
+// const REBROADCAST_PENDING_THRESHOLD_MS: u128 = 30_000; // Example: 30 seconds
 
 pub struct Consensus {
 	pub event_tx: broadcast::Sender<EventBroadcast>,
@@ -267,6 +269,9 @@ impl<'a>  Consensus {
 								warn!("🏛 ⚠️  Consensus -  Recieved Validate Block - Unable to forward unauthorized block: {:?}", e)
 							}
 							return Ok(());
+						}
+						else {
+							debug!("🏛 Consensus -  Recieved Validate Block - Block #{} from authorized proposer {}", block_number, hex::encode(proposer_from_key));
 						}
 					},
 					Err(e) => {
@@ -630,37 +635,31 @@ impl<'a>  Consensus {
 		let block_proposer_state = BlockProposerState::new(&db_pool_conn).await?;
 		let current_epoch = block_payload.block.block_header.epoch;
 		let authorized_block_proposer = block_proposer_state.load_block_proposer(self.cluster_address, current_epoch).await?.ok_or(anyhow!("No authorized block proposer for epoch : {}", current_epoch))?;
-								
+
+		debug!("🏛 Consensus -  Add and Broadcast Block - Authorized block proposer: {:?}", hex::encode(authorized_block_proposer.address));
+		debug!("🏛 Consensus -  Add and Broadcast Block - Node address: {:?}", hex::encode(self.node_address));
+		debug!("🏛 Consensus -  Add and Broadcast Block - Block number: {}, Epoch: {}", block_number, current_epoch);
+
 		if authorized_block_proposer.address != self.node_address {
-			return Err(anyhow!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Node is not an authorized block proposer for epoch: {}", current_epoch));
+			return Err(anyhow!("🏛 Consensus -  Add and Broadcast Block - Node is not an authorized block proposer for epoch: {}", current_epoch));
 		}
 
 		let block_state = BlockState::new(&db_pool_conn).await?;
 		let is_block_stored = block_state.is_block_header_stored(block_number).await?;
+		
 		if is_block_stored {
-			warn!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Drop Block #{} because it's already stored", block_number);
+			warn!("🏛 Consensus -  Add and Broadcast Block - Block #{} is already stored", block_number);
 			// Block is already present
-			return Err(anyhow!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Block #{} is already stored", block_number));
+			return Err(anyhow!("🏛 Consensus -  Add and Broadcast Block - Block #{} is already stored", block_number));
 		}
 
-		// Expire old pending blocks
-		// let expired = self.pending_blocks.expire_old_blocks(PENDING_BLOCK_EXPIRATION_TIME);
-		// warn!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Expired pending blocks: {:?}", expired);
-		
 		// NEW LOGIC: Only refuse if there are pending blocks that are not finalized
 		let pending_blocks = self.pending_blocks.get_blocks();
-		if pending_blocks.contains_key(&block_number) {
-			return Err(anyhow!(
-				"🏛 ⚠️  Consensus -  Add and Broadcast Block - Cannot add block #{} because it's already pending", 
-				block_number
-			));
-		}
-
 		if !pending_blocks.is_empty() {
 			// If there are pending blocks, ensure they are for the previous block
 			if !pending_blocks.contains_key(&(block_number - 1)) {
 				return Err(anyhow!(
-					"🏛 ⚠️  Consensus -  Add and Broadcast Block - Cannot add block #{} because previous block is not yet finalized. Pending blocks: {:?}", 
+					"🏛 Consensus -  Add and Broadcast Block - Cannot add block #{} because previous block is not yet finalized. Pending blocks: {:?}", 
 					block_number, 
 					pending_blocks.keys().collect::<Vec<_>>()
 				));
@@ -675,13 +674,13 @@ impl<'a>  Consensus {
 			let previous_block_proposer = Account::address(&pending_block_payload.verifying_key)?;
 			// Check if the block is proposed by the same block proposer
 			if block_proposer_address == previous_block_proposer {
-				warn!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Received block: {} from same block proposer. Broadcasting the block again", block_number);
+				warn!("🏛 Consensus -  Add and Broadcast Block - Received block: {} from same block proposer. Broadcasting the block again", block_number);
 				// broadcast block again if same block is proposed by an existing block proposer
 				self.broadcast_new_block(pending_block_payload.clone()).await?;
 				if let Some(vote) = pending_blocks.all_votes().into_iter().find(|v| v.verifying_key == block_payload.verifying_key) {
 					self.broadcast_vote(vote.clone()).await?;
 				}
-				return Err(anyhow!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Block already present in pending list"));
+				return Err(anyhow!("🏛 Consensus -  Add and Broadcast Block - Block already present in pending list"));
 			}
 		}
 		
@@ -689,17 +688,17 @@ impl<'a>  Consensus {
 		// Add block hash consistency check
 		if let Some(existing) = self.pending_blocks.get_blocks().get(&block_number) {
 			let existing_block = existing.get_block()
-				.ok_or(anyhow!("Pending block missing block data"))?;
+				.ok_or(anyhow!("🏛 Consensus -  Add and Broadcast Block - Pending block missing block data"))?;
 			
 			if existing_block.block.block_header.block_hash != block_payload.block.block_header.block_hash {
-				warn!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Block hash mismatch for #{}: existing {} vs new {}",
+				warn!("🏛 Consensus -  Add and Broadcast Block - Block hash mismatch for #{}: existing {} vs new {}",
 					block_number,
 					hex::encode(existing_block.block.block_header.block_hash),
 					hex::encode(block_payload.block.block_header.block_hash));
 				
 				// Clear conflicting pending block
 				self.pending_blocks.remove_block(block_number);
-				return Err(anyhow!("🏛 ⚠️  Consensus -  Add and Broadcast Block - Conflicting block hash detected for #{}", block_number));
+				return Err(anyhow!("🏛 Consensus -  Add and Broadcast Block - Conflicting block hash detected for #{}", block_number));
 			}
 		}
 

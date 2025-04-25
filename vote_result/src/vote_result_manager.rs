@@ -252,23 +252,35 @@ impl<'a> VoteResultManager {
 		}
 		// println!("SELECTED {} VALIDATORS for block {}: \n{}", selected_validators.len(),
 		// block_number, validator_print);
-		info!("🗳️  Vote Result Manager - Generate Vote Result - Validators for block #{}: \n{}", block_number, validator_print);
-		debug!("🗳️  Vote Result Manager - Generate Vote Result - pool_address: {:?}", hex::encode(pool_address));
+		info!("🗳️  Vote Result Manager - Generate Vote Result - Selected Validators for block #{}: , pool: {:?}, List of validators: \n{}", block_number, hex::encode(pool_address), validator_print);
 		
-		let unique_votes = Self::get_unique_votes(&all_votes);
+		// Filter votes to only include those matching the target block_hash
+		let filtered_votes: Vec<Vote> = all_votes
+			.into_iter() // Take ownership
+			.filter(|vote| vote.data.block_hash == block_hash)
+			.collect();
+
+		// Now use the filtered list
+		let unique_votes = Self::get_unique_votes(&filtered_votes);
 		if !unique_votes.is_empty() {
+
+			// Print validators addresses in unique_votes
+			for v in unique_votes.iter() {
+				debug!("🗳️  Vote Result Manager - Generate Vote Result - Unique Votes - For Block #{} - Validator address: {:?}", block_number, hex::encode(v.validator_address));
+			}
+
 			// If 50% of the vote is in favour of the block, the block is accepted
 			// let vote_passed = (total_favoured_stake / pool_balance as f64) > 0.5;
 			let min_votes = calculate_min_votes(validators.len(), VOTE_THRESHOLD);
 			// Check if the number of votes is less than the required minimum
 			// We assume 30% of validators will be unresponsive or not available
-			info!("🗳️  Vote Result Manager - Generate Vote Result - Min vote required #{}: total votes received #{}:", min_votes, unique_votes.len());
+			info!("🗳️  Vote Result Manager - Generate Vote Result - Min vote required #{}: total votes received for correct hash #{}:", min_votes, unique_votes.len());
 			if unique_votes.len() < min_votes {
 				return Ok(None)
 			}
 
 			let vote_passed = Self::is_passed(&unique_votes, validators, min_votes).await?;
-			info!("🗳️  Vote Result Manager - Generate Vote Result - Vote passed: {:?} for block #{}", vote_passed, block_number);
+			info!("🗳️  Vote Result Manager - Generate Vote Result - Vote passed (correct hash): {:?} for block #{:?}", vote_passed, block_number);
 			// Waiting for 60% up votes for this block
 			if !vote_passed {
 				return Ok(None)
@@ -304,7 +316,7 @@ impl<'a> VoteResultManager {
 				sig.serialize_compact().to_vec(),
 				verifying_key.serialize().to_vec(),
 				vote_passed,
-				unique_votes,
+				unique_votes, // Contains only votes for the correct hash
 			);
 
 
@@ -316,7 +328,8 @@ impl<'a> VoteResultManager {
 
 			return Ok(Some(vote_result))
 		} else {
-			return Err(anyhow!("🗳️ ❌ Vote Result Manager - No votes found for the block_hash"))
+			// No unique votes found *for the correct block hash*
+			return Err(anyhow!("🗳️ ❌ Vote Result Manager - No unique votes found matching the target block hash {}", hex::encode(block_hash)))
 		}
 	}
 

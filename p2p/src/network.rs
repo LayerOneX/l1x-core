@@ -1,4 +1,4 @@
-use crate::config::*;
+// use crate::config::*;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -38,7 +38,7 @@ use std::{
 use void::Void;
 
 use block::block_manager::{BlockManager, BlockManagerCache};
-use compile_time_config::ELIGIBLE_PEERS_INIT_BLOCK_NUMBER;
+use compile_time_config::{p2p_topics, ELIGIBLE_PEERS_INIT_BLOCK_NUMBER};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -53,7 +53,7 @@ use system::{
     dht_health_storage::DHTHealthStorage,
     node_health::{AggregatedNodeHealthBroadcast, NodeHealthBroadcast, NodeHealthPayload},
     node_info::{NodeInfo, NodeInfoBroadcast},
-    protocol::{deserialize_from_versioned_message, serialize_as_versioned_message},
+    protocol::{deserialize_from_versioned_message, serialize_as_versioned_message, ProtocolError},
     transaction::{Transaction, TransactionBroadcast},
     vote::{Vote, VoteBroadcast},
     vote_result::{VoteResult, VoteResultBroadcast},
@@ -302,15 +302,15 @@ pub async fn new(
     // };
 
     // Create new topic for transactions
-    let node_join_topic = get_topic_hash(NODE_INFO_TOPIC);
-    let tx_topic = get_topic_hash(TRANSACTIONS_TOPIC);
-    let block_validate_topic = get_topic_hash(BLOCKS_VALIDATE_TOPIC);
-    let block_proposer_topic = get_topic_hash(BLOCK_PROPOSER_TOPIC);
-    let vote_topic = get_topic_hash(VOTE_TOPIC);
-    let vote_result_topic = get_topic_hash(VOTE_RESULT_TOPIC);
-    let node_health_topic = get_topic_hash(NODE_HEALTH_TOPIC);
-    let aggregated_node_health_topic = get_topic_hash(AGGREGATED_NODE_HEALTH_TOPIC);
-	let broadcast_node_detailed_status_topic = get_topic_hash(BROADCAST_NODE_DETAILED_STATUS_TOPIC);
+    let node_join_topic = get_topic_hash(p2p_topics::NODE_INFO_TOPIC);
+    let tx_topic = get_topic_hash(p2p_topics::TRANSACTIONS_TOPIC);
+    let block_validate_topic = get_topic_hash(p2p_topics::BLOCKS_VALIDATE_TOPIC);
+    let block_proposer_topic = get_topic_hash(p2p_topics::BLOCK_PROPOSER_TOPIC);
+    let vote_topic = get_topic_hash(p2p_topics::VOTE_TOPIC);
+    let vote_result_topic = get_topic_hash(p2p_topics::VOTE_RESULT_TOPIC);
+    let node_health_topic = get_topic_hash(p2p_topics::NODE_HEALTH_TOPIC);
+    let aggregated_node_health_topic = get_topic_hash(p2p_topics::AGGREGATED_NODE_HEALTH_TOPIC);
+	let broadcast_node_detailed_status_topic = get_topic_hash(p2p_topics::BROADCAST_NODE_DETAILED_STATUS_TOPIC);
 
     let topics = vec![
         node_join_topic,
@@ -333,7 +333,7 @@ pub async fn new(
     // }
 
     // Create network identifier with network information
-    let network_id = "/ipfs/id/1.0.0/l1x".to_string();
+    let network_id = format!("/ipfs/id/1.0.0/l1x/{}/{}", eth_chain_id.clone().unwrap_or(0), cluster_address.clone().unwrap_or_default()).to_string();
 
     // Build the Swarm, connecting the lower layer transport logic with the
     // higher layer network behaviour logic.
@@ -372,16 +372,20 @@ pub async fn new(
             behaviour.kademlia.bootstrap()?;
         }
 
-        SwarmBuilder::with_tokio_executor(transport, behaviour, local_peer_id).build()
+        // Create a SwarmConfig to customize settings
+
+        SwarmBuilder::with_tokio_executor(transport, behaviour, local_peer_id)    
+        .build()
     };
 
     let (command_sender, command_receiver) = mpsc::channel(mpsc_channel_capacity.command);
     let (event_sender, event_receiver) = mpsc::channel(mpsc_channel_capacity.event);
+    let command_sender_clone = command_sender.clone();
     let client = Client {
         sender: command_sender,
         event_sender: event_sender.clone(),
     };
-    let event_loop = EventLoop::new(swarm, command_receiver, event_sender, dht_health_storage, eth_chain_id, cluster_address.clone());
+    let event_loop = EventLoop::new(swarm, command_sender_clone, command_receiver, event_sender, dht_health_storage, eth_chain_id, cluster_address.clone());
 
     // Start peer discovery
     // match client.start_peer_discovery().await {
@@ -950,6 +954,7 @@ impl BroadcastNodeDetailedStatus for Client {
 
 pub struct EventLoop {
     swarm: Swarm<Behaviour>,
+    command_sender: mpsc::Sender<Command>,
     command_receiver: mpsc::Receiver<Command>,
     event_sender: mpsc::Sender<Event>,
     pending_dial: HashMap<PeerId, oneshot::Sender<Result<(), Box<dyn Error + Send>>>>,
@@ -961,6 +966,7 @@ pub struct EventLoop {
 impl EventLoop {
     fn new(
         swarm: Swarm<Behaviour>,
+        command_sender: mpsc::Sender<Command>,
         command_receiver: mpsc::Receiver<Command>,
         event_sender: mpsc::Sender<Event>,
         dht_health_storage: DHTHealthStorage,
@@ -969,6 +975,7 @@ impl EventLoop {
     ) -> Self {
         Self {
             swarm,
+            command_sender,
             command_receiver,
             event_sender,
             pending_dial: Default::default(),
@@ -1021,6 +1028,7 @@ impl EventLoop {
             >,
         >,
     ) {
+      
         match event {
             SwarmEvent::NewListenAddr { address, .. } => {
                 let local_peer_id = *self.swarm.local_peer_id();
@@ -1029,8 +1037,50 @@ impl EventLoop {
                     address.with(Protocol::P2p(local_peer_id.into()))
                 );
             }
-            SwarmEvent::IncomingConnection { .. } => {}
-            SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
+            SwarmEvent::IncomingConnection {local_addr,send_back_addr } => {
+                debug!("🔍 Network - Incoming Connection | Swarm Event | Local Address: {:?}, Send Back Address: {:?}", 
+                    local_addr, 
+                    send_back_addr
+                );
+            }
+            SwarmEvent::ConnectionEstablished { peer_id, endpoint,num_established, established_in , .. } => {
+
+                debug!("🔍 Network - Connection Established | Swarm Event | Peer ID: {:?}, Remote Address: {:?}, Direction: {:?}, Total Established: {:?}, Established In: {:?}", 
+                        peer_id, 
+                        endpoint.get_remote_address(), 
+                        if endpoint.is_dialer() { "Dialer" } else { "Listener"},
+                        num_established,
+                        established_in.as_millis()
+                    );
+
+                // Hotfix : Implement Peer Id Whitelisting for L1X Network
+                // let allowed_peer_ids = vec![
+                //     "16Uiu2HAmNL2KXDCq3FaE6PVzSFUmZH47Tw6vkkRvVUTJZFgHgQKr",
+                //     "16Uiu2HAm3wafvxpBSFD2dPoxtKoHQTCE4npLiHEdz2PMbtoiDkA7",
+                //     "16Uiu2HAmVkaPJF2XPvevoimAArZaqGXhAeGjCNixKbukz9xh8XRU",
+                //     "16Uiu2HAmPL3jGThyGeDMsDZvjP6w2Em1gWpAifb9fHqzFdXVeEeV",
+                //     "16Uiu2HAmV6GKvSMXsMREk7n9aSCqW4uAoWPcmbeQcB16H8K2poqy",
+                //     "16Uiu2HAm62wvV9PMhvxUJyCb85z9yxoK6d7ZsN2qtHhEnSokaKMq",
+                //     "16Uiu2HAm6ARDi8oa5iGAdUY6L9goUweQUpjdP69QEXeMGPVYFDtp",
+                //     "16Uiu2HAmFm8t8VqD49SjLADvc6pbE5XkQ2s5hcQH1VzsyutB4s4s",
+                //     "16Uiu2HAmHeonuUUAuKEFFw5GVX5JmdnK6ExvQ4GXN5UuCAirbpTd",
+                //     "16Uiu2HAkwig2bUtpQPJyHANEoYHLKqGnweEeCiyNYHtVPbCjxgPt",
+                //     "16Uiu2HAmToePhyjpafK29UohyJiQVofZdjzch7QCYwpnNUBFwup3"
+                // ];
+
+                // let peer_id_str = peer_id.to_string();
+                // if !allowed_peer_ids.contains(&peer_id_str.as_str()) {
+                //     warn!("⚠️ Network - Connection Established | Swarm Event | Peer ID: {:?}, is not in the allowed peer IDs list", 
+                //         peer_id
+                //     );
+
+                //     let cmd_sender = self.command_sender.clone();
+                //     tokio::spawn(async move {
+                //         let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: "Not in allowed peer IDs list".to_string() }).await.unwrap_or_else(|e| error!("🚨 Network - Connection Established | Swarm Event | Peer ID: {:?}, failed to send DisconnectPeer event: {:?}", peer_id, e));
+                //     });
+                // }
+
+            
                 if endpoint.is_dialer() {
                     if let Some(sender) = self.pending_dial.remove(&peer_id) {
                         let _ = sender.send(Ok(()));
@@ -1058,12 +1108,23 @@ impl EventLoop {
                 peer_id,
                 cause,
                 endpoint,
+                num_established,
                 ..
             } => {
                 if let Some(cause) = cause {
-                    warn!("⚠️ Network - Connection Closed | Connection closed with peer {}: {}", peer_id, cause);
+                    warn!("⚠️ Network - Connection Closed | Connection closed with Peer ID: {:?}, Remote Address: {:?}, Total Established: {:?}, Cause: {:?}", 
+                        peer_id, 
+                        endpoint.get_remote_address(), 
+                        num_established,
+                        cause
+                    );
                 } else {
-                    warn!("⚠️ Network - Connection Closed | Connection closed with peer {}", peer_id);
+                    warn!("⚠️ Network - Connection Closed | Connection closed with Peer ID: {:?}, Remote Address: {:?}, Total Established: {:?}, Cause: {:?}", 
+                        peer_id, 
+                        endpoint.get_remote_address(), 
+                        num_established,
+                        "Closed Cleanly"
+                    );
                 }
                 // self.handle_peer_disconnection(peer_id).await;
 
@@ -1077,8 +1138,14 @@ impl EventLoop {
                         peer_id, e
                     ),
                 }
-            }
-            SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
+            },
+            SwarmEvent::OutgoingConnectionError { peer_id, error } => {
+
+                warn!("⚠️ Network - Outgoing Connection Error | Peer ID: {:?}, Error: {:?}", 
+                    peer_id, 
+                    error
+                );
+
                 if let Some(peer_id) = peer_id {
                     if let Some(sender) = self.pending_dial.remove(&peer_id) {
                         let _ = sender.send(Err(Box::new(error)));
@@ -1094,7 +1161,11 @@ impl EventLoop {
                 local_addr,
                 send_back_addr,
             } => {
-                warn!("⚠️ Network - Incoming Connection Error | Error: local_addr={local_addr:?}, send_back_addr={send_back_addr:?}, error={error:?}")
+                warn!("⚠️ Network - Incoming Connection Error | Local Address: {:?}, Send Back Address: {:?}, Error: {:?}", 
+                    local_addr, 
+                    send_back_addr, 
+                    error
+                );
             }
             SwarmEvent::Dialing(peer_id) => info!("🏥 Network - Dialing | Dialing Peer ID: {peer_id}"),
             SwarmEvent::Behaviour(event) => match event {
@@ -1290,7 +1361,7 @@ impl EventLoop {
                     } => {
                         // Are we recieving a transaction/block_payload/etc
                         match message.topic.as_str() {
-                            NODE_INFO_TOPIC => match deserialize_from_versioned_message::<NodeInfo>(&message.data) {
+                            p2p_topics::NODE_INFO_TOPIC => match deserialize_from_versioned_message::<NodeInfo>(&message.data) {
                                 Ok(node_info) => {
 
 									let network_state = NetworkState::get_instance();
@@ -1321,10 +1392,21 @@ impl EventLoop {
                                         });
                                 }
                                 Err(e) => {
-                                    warn!("⚠️ Network - Gossipsub | Can't deserialize NodeInfo from peer {}: {}", peer_id, e)
+                                    match e {
+                                        ProtocolError::NamespaceMismatch { expected, received } => {
+                                            warn!("⚠️ Network - Gossipsub | Can't deserialize NodeInfo from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
+                                            let cmd_sender = self.command_sender.clone();
+                                            tokio::spawn(async move {
+                                                let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
+                                            });
+                                        }
+                                        _ => {
+                                            warn!("⚠️ Network - Gossipsub | Can't deserialize NodeInfo from peer {}: {}", peer_id, e)
+                                        }
+                                    }
                                 }
                             },
-                            TRANSACTIONS_TOPIC => {
+                            p2p_topics::TRANSACTIONS_TOPIC => {
                                 match deserialize_from_versioned_message::<Transaction>(&message.data) {
                                     Ok(transaction) => {
                                         let _ = self
@@ -1336,11 +1418,22 @@ impl EventLoop {
                                             });
                                     }
                                     Err(e) => {
-                                        warn!("⚠️ Network - Gossipsub | Can't deserialize Transaction from peer {}: {}", peer_id, e)
+                                        match e {
+                                            ProtocolError::NamespaceMismatch { expected, received } => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize TRANSACTIONS_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
+                                                let cmd_sender = self.command_sender.clone();
+                                                tokio::spawn(async move {
+                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
+                                                });
+                                            }
+                                            _ => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize TRANSACTIONS_TOPIC from peer {}: {}", peer_id, e)
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            BLOCKS_VALIDATE_TOPIC => {
+                            p2p_topics::BLOCKS_VALIDATE_TOPIC => {
                                 match deserialize_from_versioned_message::<BlockPayload>(&message.data) {
                                     Ok(block_payload) => {
                                         // Initialize eligible peers for ping results
@@ -1375,11 +1468,22 @@ impl EventLoop {
                                             });
                                     }
                                     Err(e) => {
-                                        warn!("⚠️ Network - Gossipsub | Can't deserialize BlockValidatePayload from peer {}: {}", peer_id, e)
+                                        match e {
+                                            ProtocolError::NamespaceMismatch { expected, received } => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize BLOCKS_VALIDATE_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
+                                                let cmd_sender = self.command_sender.clone();
+                                                tokio::spawn(async move {
+                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
+                                                });
+                                            }
+                                            _ => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize BLOCKS_VALIDATE_TOPIC from peer {}: {}", peer_id, e)
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            BLOCK_PROPOSER_TOPIC => {
+                            p2p_topics::BLOCK_PROPOSER_TOPIC => {
                                 match deserialize_from_versioned_message::<BlockProposerPayload>(&message.data) {
                                     Ok(block_proposer_payload) => {
                                         let _ = self
@@ -1394,11 +1498,22 @@ impl EventLoop {
                                             });
                                     }
                                     Err(e) => {
-                                        warn!("⚠️ Network - Gossipsub | Can't deserialize BlockProposerPayload from peer {}: {}", peer_id, e)
+                                        match e {
+                                            ProtocolError::NamespaceMismatch { expected, received } => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize BLOCK_PROPOSER_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
+                                                let cmd_sender = self.command_sender.clone();
+                                                tokio::spawn(async move {
+                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
+                                                });
+                                            }
+                                            _ => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize BLOCK_PROPOSER_TOPIC from peer {}: {}", peer_id, e)
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            VOTE_TOPIC => match deserialize_from_versioned_message::<Vote>(&message.data) {
+                            p2p_topics::VOTE_TOPIC => match deserialize_from_versioned_message::<Vote>(&message.data) {
                                 Ok(vote) => {
                                     let _ =
                                         self.event_sender.send(Event::InboundVote { vote }).await.unwrap_or_else(|e| {
@@ -1406,10 +1521,21 @@ impl EventLoop {
                                         });
                                 }
                                 Err(e) => {
-                                    warn!("⚠️ Network - Gossipsub | Can't deserialize Vote: {}", e)
+                                    match e {
+                                        ProtocolError::NamespaceMismatch { expected, received } => {
+                                            warn!("⚠️ Network - Gossipsub | Can't deserialize VOTE_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
+                                            let cmd_sender = self.command_sender.clone();
+                                            tokio::spawn(async move {
+                                                let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
+                                            });
+                                        }
+                                        _ => {
+                                            warn!("⚠️ Network - Gossipsub | Can't deserialize VOTE_TOPIC from peer {}: {}", peer_id, e)
+                                        }
+                                    }
                                 }
                             },
-                            VOTE_RESULT_TOPIC => {
+                            p2p_topics::VOTE_RESULT_TOPIC => {
                                 match deserialize_from_versioned_message::<VoteResult>(&message.data) {
                                     Ok(vote_result) => {
                                         let _ = self
@@ -1421,11 +1547,22 @@ impl EventLoop {
                                             });
                                     }
                                     Err(e) => {
-                                        warn!("⚠️ Network - Gossipsub | Can't deserialize VoteResult from peer {}: {}", peer_id, e)
+                                        match e {
+                                            ProtocolError::NamespaceMismatch { expected, received } => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize VOTE_RESULT_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
+                                                let cmd_sender = self.command_sender.clone();
+                                                tokio::spawn(async move {
+                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
+                                                });
+                                            }
+                                            _ => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize VOTE_RESULT_TOPIC from peer {}: {}", peer_id, e)
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            NODE_HEALTH_TOPIC => {
+                            p2p_topics::NODE_HEALTH_TOPIC => {
                                 match deserialize_from_versioned_message::<Vec<NodeHealth>>(&message.data) {
                                     Ok(node_healths) => {
                                         let _ = self
@@ -1437,11 +1574,22 @@ impl EventLoop {
                                             });
                                     }
                                     Err(e) => {
-                                        warn!("⚠️ Network - Gossipsub | Can't deserialize NodeHealth from peer {}: {}", peer_id, e)
+                                        match e {
+                                            ProtocolError::NamespaceMismatch { expected, received } => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize NODE_HEALTH_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
+                                                let cmd_sender = self.command_sender.clone();
+                                                tokio::spawn(async move {
+                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
+                                                });
+                                            }
+                                            _ => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize NODE_HEALTH_TOPIC from peer {}: {}", peer_id, e)
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            AGGREGATED_NODE_HEALTH_TOPIC => {
+                            p2p_topics::AGGREGATED_NODE_HEALTH_TOPIC => {
                                 match deserialize_from_versioned_message::<Vec<NodeHealthPayload>>(&message.data) {
                                     Ok(aggregated_healths) => {
                                         let _ = self
@@ -1456,11 +1604,22 @@ impl EventLoop {
                                             });
                                     }
                                     Err(e) => {
-                                        warn!("⚠️ Network - Gossipsub | Can't deserialize Aggregated NodeHealth from peer {}: {}", peer_id, e)
+                                        match e {
+                                            ProtocolError::NamespaceMismatch { expected, received } => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize AGGREGATED_NODE_HEALTH_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
+                                                let cmd_sender = self.command_sender.clone();
+                                                tokio::spawn(async move {
+                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
+                                                });
+                                            }
+                                            _ => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize AGGREGATED_NODE_HEALTH_TOPIC from peer {}: {}", peer_id, e)
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            BROADCAST_NODE_DETAILED_STATUS_TOPIC => {
+                            p2p_topics::BROADCAST_NODE_DETAILED_STATUS_TOPIC => {
                                 match deserialize_from_versioned_message::<NodeDetailedStatus>(&message.data) {
 								
                                     Ok(node_detailed_status) => {
@@ -1474,8 +1633,19 @@ impl EventLoop {
                                             });
                                     }
 									Err(e) => {
-										warn!("⚠️ Network - Gossipsub | Can't deserialize NodeDetailedStatus from peer {}: {}", peer_id, e)
-									}
+                                        match e {
+                                            ProtocolError::NamespaceMismatch { expected, received } => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize BROADCAST_NODE_DETAILED_STATUS_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
+                                                let cmd_sender = self.command_sender.clone();
+                                                tokio::spawn(async move {
+                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
+                                                });
+                                            }
+                                            _ => {
+                                                warn!("⚠️ Network - Gossipsub | Can't deserialize BROADCAST_NODE_DETAILED_STATUS_TOPIC from peer {}: {}", peer_id, e)
+                                            }
+                                        }
+                                    }
 								}
                             }
                             _ => {
@@ -1644,6 +1814,12 @@ impl EventLoop {
     async fn handle_command(&mut self, command: Command) {
         debug!("🔍 Network - Command | Handling command: {:?}", command);
         match command {
+            Command::DisconnectPeer { peer_id, reason } => {
+                match self.swarm.disconnect_peer_id(peer_id) {
+                    Ok(_) => info!("🏥 Network - Command | Disconnected peer: {peer_id:?}, reason: {reason:?}"),
+                    Err(e) => error!("🚨 Network - Command | Failed to disconnect peer: {peer_id:?}, reason: {reason:?}: {e:?}"),
+                }
+            }
             Command::StartListening { addr, sender } => {
                 let _ = match self.swarm.listen_on(addr) {
                     Ok(_) => sender.send(Ok(())),
@@ -1679,7 +1855,7 @@ impl EventLoop {
                     .swarm
                     .behaviour_mut()
                     .gossipsub
-                    .publish(gossipsub::IdentTopic::new(NODE_INFO_TOPIC), tx_bytes)
+                    .publish(gossipsub::IdentTopic::new(p2p_topics::NODE_INFO_TOPIC), tx_bytes)
                 {
                     Ok(msg_id) => {
                         info!("🏥 Network - Gossipsub | Broadcast Node Info");
@@ -1692,7 +1868,7 @@ impl EventLoop {
                 },
                 Err(e) => {
                     error!("🚨 Network - Gossipsub | Failed to serialize NodeInfo to bytes");
-                    let _ = sender.send(Err(e.into()));
+                    let _ = sender.send(Err(Box::new(e)));
                 }
             },
             Command::BroadcastTransaction { transaction, sender } => {
@@ -1701,7 +1877,7 @@ impl EventLoop {
                         .swarm
                         .behaviour_mut()
                         .gossipsub
-                        .publish(gossipsub::IdentTopic::new(TRANSACTIONS_TOPIC), tx_bytes)
+                        .publish(gossipsub::IdentTopic::new(p2p_topics::TRANSACTIONS_TOPIC), tx_bytes)
                     {
                         Ok(msg_id) => {
                             info!("🏥 Network - Gossipsub | Broadcast Transaction");
@@ -1714,7 +1890,7 @@ impl EventLoop {
                     },
                     Err(e) => {
                         error!("🚨 Network - Gossipsub | Failed to serialize Transaction to bytes");
-                        let _ = sender.send(Err(e.into()));
+                        let _ = sender.send(Err(Box::new(e)));
                     }
                 }
             }
@@ -1724,7 +1900,7 @@ impl EventLoop {
                         .swarm
                         .behaviour_mut()
                         .gossipsub
-                        .publish(gossipsub::IdentTopic::new(BLOCKS_VALIDATE_TOPIC), block_bytes)
+                        .publish(gossipsub::IdentTopic::new(p2p_topics::BLOCKS_VALIDATE_TOPIC), block_bytes)
                     {
                         Ok(msg_id) => {
                             info!("🏥 Network - Gossipsub | Broadcast Validate Block");
@@ -1737,7 +1913,7 @@ impl EventLoop {
                     },
                     Err(e) => {
                         error!("🚨 Network - Gossipsub | Failed to serialize Block to bytes");
-                        let _ = sender.send(Err(e.into()));
+                        let _ = sender.send(Err(Box::new(e)));
                     }
                 }
             }
@@ -1747,7 +1923,7 @@ impl EventLoop {
             } => match serialize_as_versioned_message(block_proposer_payload) {
                 Ok(cluster_block_proposers_bytes) => {
                     match self.swarm.behaviour_mut().gossipsub.publish(
-                        gossipsub::IdentTopic::new(BLOCK_PROPOSER_TOPIC),
+                        gossipsub::IdentTopic::new(p2p_topics::BLOCK_PROPOSER_TOPIC),
                         cluster_block_proposers_bytes,
                     ) {
                         Ok(msg_id) => {
@@ -1762,7 +1938,7 @@ impl EventLoop {
                 }
                 Err(e) => {
                     error!("🚨 Network - Gossipsub | Failed to serialize Block Proposer to bytes");
-                    let _ = sender.send(Err(e.into()));
+                    let _ = sender.send(Err(Box::new(e)));
                 }
             },
             Command::BroadcastVote { vote, sender } => match serialize_as_versioned_message(vote.clone()) {
@@ -1771,7 +1947,7 @@ impl EventLoop {
                         .swarm
                         .behaviour_mut()
                         .gossipsub
-                        .publish(gossipsub::IdentTopic::new(VOTE_TOPIC), cluster_vote_bytes)
+                        .publish(gossipsub::IdentTopic::new(p2p_topics::VOTE_TOPIC), cluster_vote_bytes)
                     {
                         Ok(msg_id) => {
                             info!("🏥 Network - Gossipsub | Broadcasting Vote for Block: {}", vote.clone().data.block_number);
@@ -1785,7 +1961,7 @@ impl EventLoop {
                 }
                 Err(e) => {
                     error!("🚨 Network - Gossipsub | Failed to serialize Vote to bytes");
-                    let _ = sender.send(Err(e.into()));
+                    let _ = sender.send(Err(Box::new(e)));
                 }
             },
             Command::BroadcastVoteResult { vote_result, sender } => match serialize_as_versioned_message(vote_result) {
@@ -1794,7 +1970,7 @@ impl EventLoop {
                         .swarm
                         .behaviour_mut()
                         .gossipsub
-                        .publish(gossipsub::IdentTopic::new(VOTE_RESULT_TOPIC), cluster_vote_result_bytes)
+                        .publish(gossipsub::IdentTopic::new(p2p_topics::VOTE_RESULT_TOPIC), cluster_vote_result_bytes)
                     {
                         Ok(msg_id) => {
                             info!("🏥 Network - Gossipsub | Broadcast Vote Result");
@@ -1808,7 +1984,7 @@ impl EventLoop {
                 }
                 Err(e) => {
                     error!("🚨 Network - Gossipsub | Failed to serialize Vote Result to bytes");
-                    let _ = sender.send(Err(e.into()));
+                    let _ = sender.send(Err(Box::new(e)));
                 }
             },
             Command::BroadcastNodeHealth { node_healths, sender } => {
@@ -1818,7 +1994,7 @@ impl EventLoop {
                             .swarm
                             .behaviour_mut()
                             .gossipsub
-                            .publish(gossipsub::IdentTopic::new(NODE_HEALTH_TOPIC), healths)
+                            .publish(gossipsub::IdentTopic::new(p2p_topics::NODE_HEALTH_TOPIC), healths)
                         {
                             Ok(msg_id) => {
                                 info!("🏥 Network - Gossipsub | Broadcast Node Health");
@@ -1832,7 +2008,7 @@ impl EventLoop {
                     }
                     Err(e) => {
                         error!("🚨 Network - Gossipsub | Failed to serialize Node Health to bytes");
-                        let _ = sender.send(Err(e.into()));
+                        let _ = sender.send(Err(Box::new(e)));
                     }
                 }
 
@@ -1869,7 +2045,7 @@ impl EventLoop {
                         .swarm
                         .behaviour_mut()
                         .gossipsub
-                        .publish(gossipsub::IdentTopic::new(AGGREGATED_NODE_HEALTH_TOPIC), health)
+                        .publish(gossipsub::IdentTopic::new(p2p_topics::AGGREGATED_NODE_HEALTH_TOPIC), health)
                     {
                         Ok(msg_id) => {
                             info!("🏥 Network - Gossipsub | Broadcast Node Health Payload");
@@ -1883,7 +2059,7 @@ impl EventLoop {
                 }
                 Err(e) => {
                     error!("🚨 Network - Gossipsub | Failed to serialize Node Health Payload to bytes");
-                    let _ = sender.send(Err(e.into()));
+                    let _ = sender.send(Err(Box::new(e)));
                 }
             },
             Command::TopicSubscribe { topic_string, sender } => {
@@ -1953,7 +2129,7 @@ impl EventLoop {
                             .swarm
                             .behaviour_mut()
                             .gossipsub
-                            .publish(gossipsub::IdentTopic::new(BROADCAST_NODE_DETAILED_STATUS_TOPIC), node_detailed_status_bytes)
+                            .publish(gossipsub::IdentTopic::new(p2p_topics::BROADCAST_NODE_DETAILED_STATUS_TOPIC), node_detailed_status_bytes)
                         {
                             Ok(msg_id) => {
                                 info!("🏥 Network - Gossipsub | Broadcast Node Detailed Status");
@@ -1967,7 +2143,7 @@ impl EventLoop {
                     }
                     Err(e) => {
                         error!("🚨 Network - Gossipsub | Failed to serialize Node Detailed Status to bytes");
-                        let _ = sender.send(Err(e.into()));
+                        let _ = sender.send(Err(Box::new(e)));
                     }
                 }
 			},
@@ -2156,7 +2332,7 @@ fn gossipsub_behaviour(
     };
 
     let gossipsub_config = gossipsub::ConfigBuilder::default()
-        .heartbeat_interval(Duration::from_secs(4))
+        .heartbeat_interval(Duration::from_secs(10))
         .validation_mode(gossipsub::ValidationMode::Strict) // This sets the kind of message validation. The default is Strict (enforce message signing)
         .message_id_fn(message_id_fn) // content-address messages. No two messages of the same content will be propagated. NOTE:
         // Not sure if we want this method or a different method
@@ -2264,7 +2440,11 @@ pub enum Command {
 	BroadcastNodeDetailedStatus {
 		node_detailed_status: NodeDetailedStatus,
         sender: oneshot::Sender<Result<MessageId, Box<dyn Error + Send>>>,
-	}
+	},
+    DisconnectPeer {
+        peer_id: PeerId,
+        reason: String,
+    }
 }
 
 
@@ -2327,7 +2507,7 @@ pub enum Event {
 	PublishNodeDetailedStatus {
         peer_id: String,
     },
-    InboundNodeDetailedStatus(NodeDetailedStatus),
+    InboundNodeDetailedStatus(NodeDetailedStatus)
 }
 
 /// Given a human-readable topic name, return the topic hash

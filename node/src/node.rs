@@ -12,6 +12,7 @@ use p2p::network::{self, Event};
 use primitives::*;
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use serde_json::Value;
+use util::generic::current_timestamp_in_secs;
 use std::{
 	collections::HashMap, sync::Arc, thread, time::{Instant, SystemTime, UNIX_EPOCH}, usize
 };
@@ -424,6 +425,7 @@ impl <'a> FullNode {
 				secret_key,
 				verifying_key,
 				network_receive_tx.clone(),
+				block_time
 			));
 
 			task::spawn(Self::broadcast_network(
@@ -794,7 +796,10 @@ impl <'a> FullNode {
 		secret_key: SecretKey,
 		verifying_key: PublicKey,
 		mut network_receive_tx: mpsc::Sender<NetworkMessage>,
+		block_time: u128,
 	){
+
+		
 		let db_pool_conn =
 			Database::get_pool_connection().await.expect("🚨 Node - Block Production | error getting db_pool_conn");
 
@@ -858,7 +863,7 @@ impl <'a> FullNode {
 					}
 					if mempool.transactions_priority.len() >= mempool.max_size {
 						info!("🔍 Node - Block Production | ProposeBlockOnMempoolFull event");
-						match mempool.propose_block(&db_pool_conn, secret_key, verifying_key, network_receive_tx.clone()).await {
+						match mempool.propose_block(&db_pool_conn, secret_key, verifying_key, network_receive_tx.clone(), block_time).await {
 							Ok(result) => {
 								match result {
 									mempool::mempool::ProposeBlockResult::Proposed(events) => {
@@ -922,6 +927,7 @@ impl <'a> FullNode {
 					}
 				},
 				ProcessMempool::ProposeBlockOnBlockTime => {
+					let timestamp = current_timestamp_in_secs().unwrap_or_default();
 					match mempool.remove_expired_transactions().await {
 						Ok(expired_transactions) => {
 							for expired_transaction in expired_transactions {
@@ -935,7 +941,7 @@ impl <'a> FullNode {
 						},
 						Err(error) => error!("🚨 Node - Block Production | Error while clearing expired transactions: {:?}", error),
 					}
-					match mempool.propose_block(&db_pool_conn, secret_key, verifying_key, network_receive_tx.clone()).await {
+					match mempool.propose_block(&db_pool_conn, secret_key, verifying_key, network_receive_tx.clone(), block_time).await {
 						Ok(result) => {
 							match result {
 								mempool::mempool::ProposeBlockResult::Proposed(events) => {

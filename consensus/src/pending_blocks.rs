@@ -96,7 +96,8 @@ impl<'a> PendingBlock {
 	}
 	
 	pub fn add_vote(&mut self, vote: Vote) {
-		self.votes.push(vote)
+		// Check if a vote from this validator for this block already exists
+		self.votes.push(vote);
 	}
 
 	pub fn add_vote_result(&mut self, vote_result: VoteResult) {
@@ -345,7 +346,7 @@ impl<'a> PendingBlock {
 					
 			if new_epoch > block_payload.block.block_header.epoch {
 		
-				debug!("🤝 Consensus | Block #{} | Epoch {} | End of Epoch | Proposer Selection", block_number, new_epoch);
+				debug!("🤝 Consensus | Block #{} | Epoch {} | End of Epoch | Attempting Proposer Selection", block_number, new_epoch);
 				// let last_block_header = {
 				// 	let block_state = BlockState::new(db_pool_conn).await?;
 				// 	block_state.block_head_header(block_payload.block.block_header.cluster_address).await?
@@ -469,15 +470,29 @@ impl<'a> PendingBlocks {
 			self.network_state.clone(),
 		)
 	}
-
+	pub fn vote_exists(&mut self, vote: &Vote) -> bool {
+		self.blocks.get(&vote.data.block_number)
+			.map_or(false, |block|
+				block.votes.iter().find(|&v|
+					v.validator_address == vote.validator_address && v.data.epoch == vote.data.epoch
+				).is_some() // Check if find returned Some
+			)
+	}
+	
 	pub fn add_vote(&mut self, vote: Vote) {
-		let block_number = vote.data.block_number;
-		if let Some(pending_block) = self.blocks.get_mut(&block_number) {
-			pending_block.add_vote(vote);
-		} else {
-			let mut pending_block = self.get_new_pending_block();
-			pending_block.add_vote(vote);
-			self.blocks.insert(block_number, pending_block);
+	
+		if !self.vote_exists(&vote) {
+			let block_number = vote.data.block_number;
+			if let Some(pending_block) = self.blocks.get_mut(&block_number) {
+				pending_block.add_vote(vote);
+			} else {
+				let mut pending_block = self.get_new_pending_block();
+				pending_block.add_vote(vote);
+				self.blocks.insert(block_number, pending_block);
+			}
+		}
+		else {
+			warn!(" 🤝 Consensus | Block #{} | Duplicate Vote Received | Validator: {} | Epoch: {}", vote.data.block_number, hex::encode(vote.validator_address), vote.data.epoch);
 		}
 	}
 
