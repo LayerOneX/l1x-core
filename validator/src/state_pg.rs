@@ -358,4 +358,39 @@ impl<'a> ValidatorState for StatePg<'a> {
 
 		Ok(())
 	}
+
+	async fn has_validators_for_epoch(
+		&self,
+		_epoch: Epoch,
+	) -> Result<bool, Error> {
+		use db::postgres::schema::validator::dsl::*;
+		use diesel::result::Error as DieselError; // Import Diesel error type
+
+		let current_epoch = convert_to_big_decimal_epoch(_epoch);
+
+		let query = validator
+			.filter(epoch.eq(&current_epoch));
+
+		let res: QueryResult<bool> = match &self.pg.conn { // Check for existence using count or select(1) for efficiency
+			PgConnectionType::TxConn(conn) => {
+				 use diesel::dsl::select;
+				 use diesel::dsl::exists;
+				 select(exists(query)).get_result(*conn.lock().await) // Check existence
+			}
+			PgConnectionType::PgConn(conn) => {
+				 use diesel::dsl::select;
+				 use diesel::dsl::exists;
+				 select(exists(query)).get_result(&mut *conn.lock().await) // Check existence
+			}
+		};
+
+
+		match res {
+			Ok(exists) => Ok(exists),
+			// Specifically handle NotFound if needed, though exists() typically returns Ok(false) instead
+			Err(DieselError::NotFound) => Ok(false), // Treat NotFound as false
+			// Any other error is a real DB error
+			Err(e) => Err(e.into()), // Propagate other database errors
+		}
+	}
 }

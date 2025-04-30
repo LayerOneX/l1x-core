@@ -1,7 +1,7 @@
 use crate::block_proposer_state::BlockProposerState;
 use anyhow::{Error};
 use db::db::DbTxConn;
-use primitives::{Address, BlockNumber, Epoch};
+use primitives::{Address, Epoch};
 use std::collections::HashMap;
 use system::block_header::BlockHeader;
 use system::block_proposer::BlockProposer;
@@ -19,7 +19,7 @@ impl<'a> BlockProposerManager {
 		validators: Vec<Validator>,
 		db_pool_conn: &'a DbTxConn<'a>,
 	) -> Result<Address, Error> {
-		let mut eligible_validators = validators;
+		let eligible_validators = validators;
 		let seed = ValidatorManager.calculate_seed(block_header.block_number, epoch);
 		
 		debug!("🤝 Consensus | Block #{} | Epoch {} | Proposer Selection | Seed: {}", block_header.block_number, epoch, seed);
@@ -34,28 +34,7 @@ impl<'a> BlockProposerManager {
 
 		debug!("🤝 Consensus | Block #{} | Epoch {} | Proposer Selection | Proposer Index: {}", block_header.block_number, epoch, proposer_index);
 
-		let block_proposer_state = BlockProposerState::new(db_pool_conn).await?;
-
-		// Check if the proposer is already in the database
-		let proposer_exists_for_epoch = match block_proposer_state.load_block_proposer(block_header.cluster_address, epoch).await{
-			Ok(Some(proposer)) => {
-				true
-			},
-			Ok(None) => {
-				false
-			},
-			Err(e) => {
-				false
-			}
-		};
-
-		if proposer_exists_for_epoch {
-			debug!("🤝 Consensus | Block #{} | Epoch {} | Proposer Selection | Proposer already exists", block_header.block_number, epoch);
-			return Ok(selected_address);
-		}
 		
-
-		block_proposer_state.store_block_proposer(block_header.cluster_address, epoch, selected_address).await?;
 		Ok(selected_address)
 	}
 	
@@ -81,7 +60,6 @@ impl<'a> BlockProposerManager {
 
 	pub async fn get_block_proposer_for_epoch(
 		&mut self,
-		block_number: BlockNumber,
 		cluster_address: Address,
 		epoch: Epoch,
 		db_pool_conn: &'a DbTxConn<'a>,

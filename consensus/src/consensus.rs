@@ -11,25 +11,28 @@ use p2p::network::{NetworkState, PeerStatusInfo};
 use primitives::*;
 use secp256k1::{hashes::sha256, Message, PublicKey, SecretKey};
 use system::{
-	account::Account, block::{BlockPayload, L1xResponse, QueryBlockMessage}, block_proposer::BlockProposerPayload, mempool::ProcessMempool, network::{BroadcastNetwork, EventBroadcast}, node_health::{NodeHealth, NodeHealthPayload}, node_info::NodeInfo, node_status::NodeDetailedStatus, vote::{Vote, VoteSignPayload}, vote_result::VoteResult
+	account::Account, block::{BlockPayload, L1xResponse, QueryBlockMessage}, block_proposer::BlockProposerPayload, mempool::ProcessMempool, network::{BroadcastNetwork, EventBroadcast}, node_health::{NodeHealth, NodeHealthPayload}, node_info::NodeInfo, node_status::NodeDetailedStatus, validator::ValidatorPayload, vote::{Vote, VoteSignPayload}, vote_result::VoteResult
 };
 use tokio::sync::{broadcast, mpsc};
 use validate::{
-	validate_block_proposer::ValidateBlockProposer, validate_node_info::ValidateNodeInfo,
+	validate_block_proposer::ValidateBlockProposer, 
+	validate_node_info::ValidateNodeInfo,
+	validate_validator::ValidateValidatorPayload,
 };
-use validator::{validator_state::ValidatorState, validator_manager::ValidatorManager};
+use validator:: validator_state::ValidatorState;
+// use validator::{validator_state::ValidatorState, validator_manager::ValidatorManager};
 use crate::pending_blocks::PendingBlocks;
 use l1x_htm::realtime_checks::RealTimeChecks;
 use block_proposer::block_proposer_manager::BlockProposerManager;
-use system::block_header::BlockHeader;
+// use system::block_header::BlockHeader;
 use system::block_proposer::BlockProposer;
 use std::str::FromStr;
 use libp2p::PeerId;
 use execute::execute_block::ExecuteBlock;
 use l1x_htm::INVALID_RESPONSE_TIME;
-use runtime_config::RuntimeConfigCache;
+// use runtime_config::RuntimeConfigCache;
 use system::block::BlockType;
-use system::validator::Validator;
+// use system::validator::Validator;
 use validate::validate_block::ValidateBlock;
 use validate::validate_vote_result::ValidateVoteResult;
 use vote_result::vote_result_state::VoteResultState;
@@ -332,37 +335,73 @@ impl<'a>  Consensus {
 		block_proposer_payload: BlockProposerPayload,
 		db_pool_conn: &'a DbTxConn<'a>,
 	) -> Result<(), Error> {
+		info!("🏛 Consensus -  Recieved Block Proposer from Network for epoch: {}, block proposer address: {}", block_proposer_payload.epoch, hex::encode(block_proposer_payload.block_proposer_address));
 		//verify signatures
-		let _valid_block_proposer =
-			ValidateBlockProposer::validate_block_proposer(&block_proposer_payload).await?;
-		let block_proposer_state = BlockProposerState::new(&db_pool_conn).await?;
-		block_proposer_state
-			.store_block_proposers(
-				&block_proposer_payload.cluster_block_proposers.clone(),
-				None,
-				None,
-			)
-			.await?;
 
-		// Broadcast block proposer if in multinode mode and the block proposer selection is valid
-		if self.multinode_mode {
-			// Update block_payload with node's address in order to make broadcast message unique for this node
-			let block_proposer_payload = BlockProposerPayload {
-				cluster_block_proposers: block_proposer_payload.cluster_block_proposers,
-				signature: block_proposer_payload.signature,
-				verifying_key: block_proposer_payload.verifying_key,
-				sender: self.node_address,
-			};
-			if let Err(e) = self
-				.network_client_tx
-				.send(BroadcastNetwork::BroadcastBlockProposer(
-					block_proposer_payload,
-				))
-				.await
-			{
-				warn!("🏛 ⚠️  Consensus -  Recieved Block Proposer - Unable to write block_proposer to network_client_tx channel: {:?}", e)
-			}
+		debug!("🏛 Consensus -  Recieved Block Proposer - Validating block proposer payload: {:?}", block_proposer_payload);
+		ValidateBlockProposer::validate_block_proposer(&block_proposer_payload).await?;
+
+		// Check if 
+		let block_proposer_state = BlockProposerState::new(&db_pool_conn).await?;
+		
+		// Check if the sender is the block proposer for previous epoch
+		let previous_epoch = block_proposer_payload.epoch - 1;
+		let previous_block_proposer = match block_proposer_state.load_block_proposer(block_proposer_payload.cluster_address, previous_epoch).await? {
+			Some(proposer) => proposer,
+			None => return Err(anyhow!("🏛 ⚠️  Consensus -  Recieved Block Proposer - No block proposer found for previous epoch: {}", previous_epoch).into()),
+		};
+		if previous_block_proposer.address != block_proposer_payload.sender {
+			warn!("🏛 Consensus -  Recieved Block Proposer - Sender address: {} is not the block proposer for previous epoch: {}", hex::encode(block_proposer_payload.sender), previous_epoch);
+			return Ok(());
 		}
+		
+		// Check if the block proposer is already stored
+		if block_proposer_state.is_block_proposer_stored(block_proposer_payload.cluster_address, block_proposer_payload.epoch).await? {
+			info!("🏛 Consensus -  Recieved Block Proposer - Block proposer is already stored for epoch: {}", block_proposer_payload.epoch);
+			return Ok(());
+		}
+
+		block_proposer_state.store_block_proposer(block_proposer_payload.cluster_address, block_proposer_payload.epoch, block_proposer_payload.block_proposer_address).await?;
+		
+		Ok(())
+	}
+
+	pub async fn receive_validators(
+		&mut self,
+		validator_payload: ValidatorPayload,
+		db_pool_conn: &'a DbTxConn<'a>,
+	) -> Result<(), Error> {
+		info!("🏛 Consensus -  Recieved Validators - Received Validators from Network for epoch: {}", validator_payload.epoch);
+		debug!("🏛 Consensus -  Recieved Validators - Validating validator payload: {:?}", validator_payload);
+		
+		// Verify the signature of the validator payload
+		ValidateValidatorPayload::validate_validator_payload(&validator_payload).await?;
+
+		// Check if the sender is the block proposer for previous epoch
+		let block_proposer_state = BlockProposerState::new(&db_pool_conn).await?;
+		let previous_epoch = validator_payload.epoch - 1;
+		let previous_block_proposer = match block_proposer_state.load_block_proposer(validator_payload.cluster_address, previous_epoch).await? {
+			Some(proposer) => proposer,
+			None => return Err(anyhow!("🏛 ⚠️  Consensus -  Recieved Block Proposer - No block proposer found for previous epoch: {}", previous_epoch).into()),
+		};
+		if previous_block_proposer.address != validator_payload.sender {
+			warn!("🏛 Consensus -  Recieved Validators - Sender address: {} is not the block proposer for previous epoch: {}", hex::encode(validator_payload.sender), previous_epoch);
+			return Ok(());
+		}
+
+
+		// Store the validators in the database
+		let validator_state = ValidatorState::new(&db_pool_conn).await?;
+
+		// Check if the validators are already stored
+		if validator_state.has_validators_for_epoch(validator_payload.epoch).await? {
+			info!("🏛 Consensus -  Recieved Validators - Validators are already stored for epoch: {}", validator_payload.epoch);
+			return Ok(());
+		}
+
+		validator_state.batch_store_validators(&validator_payload.validators).await?;
+
+		
 		Ok(())
 	}
 
@@ -630,79 +669,51 @@ impl<'a>  Consensus {
 	pub async fn add_and_broadcast_block(&mut self, block_payload: BlockPayload) -> Result<(), Error> {
 		let block_number = block_payload.block.block_header.block_number;
 		let db_pool_conn = Database::get_pool_connection().await?;
-
+		
 		// Add Block proposer validation
 		let block_proposer_state = BlockProposerState::new(&db_pool_conn).await?;
 		let current_epoch = block_payload.block.block_header.epoch;
 		let authorized_block_proposer = block_proposer_state.load_block_proposer(self.cluster_address, current_epoch).await?.ok_or(anyhow!("No authorized block proposer for epoch : {}", current_epoch))?;
-
+	
 		debug!("🏛 Consensus -  Add and Broadcast Block - Authorized block proposer: {:?}", hex::encode(authorized_block_proposer.address));
 		debug!("🏛 Consensus -  Add and Broadcast Block - Node address: {:?}", hex::encode(self.node_address));
 		debug!("🏛 Consensus -  Add and Broadcast Block - Block number: {}, Epoch: {}", block_number, current_epoch);
-
+	
 		if authorized_block_proposer.address != self.node_address {
 			return Err(anyhow!("🏛 Consensus -  Add and Broadcast Block - Node is not an authorized block proposer for epoch: {}", current_epoch));
 		}
-
+	
+		// Check if block is already stored
 		let block_state = BlockState::new(&db_pool_conn).await?;
 		let is_block_stored = block_state.is_block_header_stored(block_number).await?;
-		
 		if is_block_stored {
-			warn!("🏛 Consensus -  Add and Broadcast Block - Block #{} is already stored", block_number);
-			// Block is already present
+			warn!("🏛 ⚠️ Consensus -  Add and Broadcast Block - Block #{} is already stored", block_number);
 			return Err(anyhow!("🏛 Consensus -  Add and Broadcast Block - Block #{} is already stored", block_number));
 		}
-
-		// NEW LOGIC: Only refuse if there are pending blocks that are not finalized
-		let pending_blocks = self.pending_blocks.get_blocks();
-		if !pending_blocks.is_empty() {
-			// If there are pending blocks, ensure they are for the previous block
-			if !pending_blocks.contains_key(&(block_number - 1)) {
-				return Err(anyhow!(
-					"🏛 Consensus -  Add and Broadcast Block - Cannot add block #{} because previous block is not yet finalized. Pending blocks: {:?}", 
-					block_number, 
-					pending_blocks.keys().collect::<Vec<_>>()
-				));
-			}
-		}
-		
-
-		// Check if the block is already present in the pending list
-		if let Some(pending_blocks) = self.pending_blocks.get_blocks().get(&block_number) {
-			let block_proposer_address = Account::address(&block_payload.verifying_key)?;
-			let pending_block_payload = pending_blocks.get_block().ok_or(anyhow::anyhow!("Failed to get block from the pending block"))?;
-			let previous_block_proposer = Account::address(&pending_block_payload.verifying_key)?;
-			// Check if the block is proposed by the same block proposer
-			if block_proposer_address == previous_block_proposer {
-				warn!("🏛 Consensus -  Add and Broadcast Block - Received block: {} from same block proposer. Broadcasting the block again", block_number);
-				// broadcast block again if same block is proposed by an existing block proposer
-				self.broadcast_new_block(pending_block_payload.clone()).await?;
-				if let Some(vote) = pending_blocks.all_votes().into_iter().find(|v| v.verifying_key == block_payload.verifying_key) {
-					self.broadcast_vote(vote.clone()).await?;
-				}
-				return Err(anyhow!("🏛 Consensus -  Add and Broadcast Block - Block already present in pending list"));
-			}
-		}
-		
-
-		// Add block hash consistency check
-		if let Some(existing) = self.pending_blocks.get_blocks().get(&block_number) {
-			let existing_block = existing.get_block()
-				.ok_or(anyhow!("🏛 Consensus -  Add and Broadcast Block - Pending block missing block data"))?;
-			
-			if existing_block.block.block_header.block_hash != block_payload.block.block_header.block_hash {
-				warn!("🏛 Consensus -  Add and Broadcast Block - Block hash mismatch for #{}: existing {} vs new {}",
-					block_number,
-					hex::encode(existing_block.block.block_header.block_hash),
-					hex::encode(block_payload.block.block_header.block_hash));
+	
+		// Check pending blocks
+		if self.pending_blocks.get_blocks().len() == 1 {
+			if let Some(pending_block) = self.pending_blocks.get_blocks().get(&block_number) {
+				let block_proposer_address = Account::address(&block_payload.verifying_key)?;
+				let pending_block_payload = pending_block.get_block().ok_or(anyhow!("Failed to get block from the pending block"))?;
+				let previous_block_proposer = Account::address(&pending_block_payload.verifying_key)?;
 				
-				// Clear conflicting pending block
-				self.pending_blocks.remove_block(block_number);
-				return Err(anyhow!("🏛 Consensus -  Add and Broadcast Block - Conflicting block hash detected for #{}", block_number));
+				if block_proposer_address == previous_block_proposer {
+					warn!("🏛 ⚠️ Consensus -  Add and Broadcast Block - Received block: {} from same block proposer. Broadcasting the block again", block_number);
+					self.broadcast_new_block(pending_block_payload.clone()).await?;
+					
+					if let Some(vote) = pending_block.all_votes().into_iter().find(|v| v.verifying_key == block_payload.verifying_key) {
+						self.broadcast_vote(vote.clone()).await?;
+					}
+					return Err(anyhow!("🏛 Consensus -  Add and Broadcast Block - Block already present in pending list"));
+				}
+			} else {
+				let pending_blocks = self.pending_blocks.get_blocks().keys().collect::<Vec<_>>();
+				warn!("🏛 ⚠️ Consensus -  Add and Broadcast Block - Last block is not executed yet, #{}, pending blocks: {:?}", block_number, pending_blocks);
+				return Err(anyhow!("🏛 Consensus -  Add and Broadcast Block - Last block is not executed yet, #{}, pending blocks: {:?}", block_number, pending_blocks));
 			}
 		}
-
-
+	
 		let vote_sign_payload = VoteSignPayload::new(
 			block_payload.block.block_header.block_number,
 			block_payload.block.block_header.block_hash,
@@ -710,9 +721,9 @@ impl<'a>  Consensus {
 			block_payload.block.block_header.epoch,
 			true, // aye vote is implicit as the node produced the block itself
 		);
-
+	
 		let sig = vote_sign_payload.sign_with_ecdsa(self.secret_key)?;
-
+	
 		let vote = Vote::new(
 			vote_sign_payload,
 			self.node_address.clone(),
@@ -722,12 +733,90 @@ impl<'a>  Consensus {
 		
 		// broadcast block
 		self.broadcast_new_block(block_payload.clone()).await?;
-
-		debug!("🏛 Consensus -  Add and Broadcast Block - Adding Vote and Block to pending list, Block #: {:?}, Voter address: {:?}", block_payload.block.block_header.block_number, hex::encode(vote.validator_address));
+	
+		debug!("🏛 Consensus -  Add and Broadcast Block - Adding Vote and Block to pending list, Block #: {:?}, Voter address: {:?}", 
+			block_payload.block.block_header.block_number, 
+			hex::encode(vote.validator_address));
+	
 		// Add block to pending list
 		self.pending_blocks.add_vote(vote);
 		self.pending_blocks.add_block(block_payload);
+	
+		info!("🏛 Consensus -  Add and Broadcast Block - Successfully added block #{} to pending state", block_number);
+	
+		Ok(())
+	}
 
+	pub async fn add_new_block_proposer(&mut self, block_proposer_payload: BlockProposerPayload) -> Result<(), Error> {
+		let db_pool_conn = Database::get_pool_connection().await?;
+		let block_proposer_state = BlockProposerState::new(&db_pool_conn).await?;
+
+		// Check if already exists 
+		debug!("🏛 Consensus -  Add New Block Proposer - Checking if block proposer is already stored for epoch: {}", block_proposer_payload.epoch);
+		let is_stored = match block_proposer_state.is_block_proposer_stored(block_proposer_payload.cluster_address, block_proposer_payload.epoch).await? {
+			true => true,
+			false => false,
+		};
+
+		if !is_stored {
+			warn!("🏛 Consensus -  Add New Block Proposer - Block proposer for epoch: {} is already stored", block_proposer_payload.epoch);
+			// Store the new block proposer in the database	
+			block_proposer_state.store_block_proposer(block_proposer_payload.cluster_address,block_proposer_payload.epoch, block_proposer_payload.block_proposer_address).await?;
+		}
+
+		
+		
+		// TODO: Broadcast the new block proposer to the network
+		if let Err(e) = self
+			.network_client_tx
+			.send(BroadcastNetwork::BroadcastBlockProposer(block_proposer_payload.clone()))
+			.await
+		{
+			warn!("🏛 ⚠️  Consensus -  Broadcast New Block - Unable to write block to network_client_tx channel: {:?}", e)
+		}
+		else
+		{
+			info!("🏛 Consensus -  Add New Block Proposer - Successfully broadcasted block proposer for epoch {}", block_proposer_payload.epoch);
+		}
+
+		
+		Ok(())
+	}
+
+	pub async fn add_new_validators(&mut self, validator_payload: ValidatorPayload) -> Result<(), Error> {
+		let db_pool_conn = Database::get_pool_connection().await?;
+		let validator_state = ValidatorState::new(&db_pool_conn).await?;
+
+		// Check if the validators are already stored
+		debug!("🏛 Consensus -  Add New Validators - Checking if validators are stored for epoch: {}", validator_payload.epoch);
+		let is_stored = match validator_state.has_validators_for_epoch(validator_payload.epoch).await{
+			Ok(is_stored) => is_stored,
+			Err(e) => {
+				warn!("🏛 ⚠️  Consensus -  Add New Validators - Failed to check if validators are stored: {:?}", e);
+				return Err(e);
+			}
+		};
+
+		if !is_stored {
+			warn!("🏛 Consensus -  Add New Validators - Validators for epoch: {} are already stored", validator_payload.epoch);
+			// Store the new validators in the database
+			validator_state.batch_store_validators(&validator_payload.validators).await?;
+		}
+
+		
+
+		// TODO: Broadcast the new validators to the network
+		if let Err(e) = self
+			.network_client_tx
+			.send(BroadcastNetwork::BroadcastValidators(validator_payload.clone()))
+			.await
+		{
+			warn!("🏛 ⚠️  Consensus -  Broadcast Validators - Unable to write validators to network_client_tx channel: {:?}", e)
+		}
+		else
+		{
+			info!("🏛 Consensus -  Add New Validators - Successfully broadcasted validators for epoch {}", validator_payload.epoch);
+		}
 		Ok(())
 	}
 
@@ -865,41 +954,41 @@ impl<'a>  Consensus {
 	}
 }
 
-pub async fn select_and_store_validators_and_proposer<'a>(epoch: Epoch,
-													 last_block_header: &BlockHeader,
-													 db_pool_conn: &'a DbTxConn<'a>,
-) -> Result<(), Error> {
-	let rt_config = RuntimeConfigCache::get().await?;
+// pub async fn select_and_store_validators_and_proposer<'a>(epoch: Epoch,
+// 													 last_block_header: &BlockHeader,
+// 													 db_pool_conn: &'a DbTxConn<'a>,
+// ) -> Result<(), Error> {
+// 	let rt_config = RuntimeConfigCache::get().await?;
 
-	// Select block validators
-	let validator_manager = ValidatorManager{};
-	let selected_validators = validator_manager
-		.select_validators_for_epoch(
-			&last_block_header,
-			epoch,
-			db_pool_conn
-		)
-		.await?;
+// 	// Select block validators
+// 	let validator_manager = ValidatorManager{};
+// 	let selected_validators = validator_manager
+// 		.select_validators_for_epoch(
+// 			&last_block_header,
+// 			epoch,
+// 			db_pool_conn
+// 		)
+// 		.await?;
 
-	let validator_str = selected_validators.iter().map(|v| hex::encode(v.address)).collect::<Vec<String>>().join(", ");
-	info!("🏛 Consensus -  Select Validators and Proposer - Selected Validators for Epoch: {}, Validators: {}",epoch,validator_str);
+// 	let validator_str = selected_validators.iter().map(|v| hex::encode(v.address)).collect::<Vec<String>>().join(", ");
+// 	info!("🏛 Consensus -  Select Validators and Proposer - Selected Validators for Epoch: {}, Validators: {}",epoch,validator_str);
 
-	// Store selected validators in validator state
-	let validator_state = ValidatorState::new(db_pool_conn).await?;
-	validator_state.batch_store_validators(&selected_validators).await?;
-	// Select block proposer
-	let mut block_proposer_manager = BlockProposerManager{};
-	let mut eligible_block_proposers: Vec<Validator> = vec![];
-	// filter out validator based on whitelisted/blacklisted nodes
-	if let Some(whitelisted_block_proposers) = &rt_config.whitelisted_block_proposers {
-		eligible_block_proposers = selected_validators.into_iter()
-			.filter(|v| (whitelisted_block_proposers.contains(&v.address))).collect();
-	} else if let Some(blacklisted_block_proposers) = &rt_config.blacklisted_block_proposers {
-		eligible_block_proposers = selected_validators.into_iter()
-			.filter(|v| (!blacklisted_block_proposers.contains(&v.address))).collect();
-	}
+// 	// Store selected validators in validator state
+// 	let validator_state = ValidatorState::new(db_pool_conn).await?;
+// 	validator_state.batch_store_validators(&selected_validators).await?;
+// 	// Select block proposer
+// 	let mut block_proposer_manager = BlockProposerManager{};
+// 	let mut eligible_block_proposers: Vec<Validator> = vec![];
+// 	// filter out validator based on whitelisted/blacklisted nodes
+// 	if let Some(whitelisted_block_proposers) = &rt_config.whitelisted_block_proposers {
+// 		eligible_block_proposers = selected_validators.into_iter()
+// 			.filter(|v| (whitelisted_block_proposers.contains(&v.address))).collect();
+// 	} else if let Some(blacklisted_block_proposers) = &rt_config.blacklisted_block_proposers {
+// 		eligible_block_proposers = selected_validators.into_iter()
+// 			.filter(|v| (!blacklisted_block_proposers.contains(&v.address))).collect();
+// 	}
 	
-	let block_proposer = block_proposer_manager.select_block_proposers(epoch, last_block_header, eligible_block_proposers, db_pool_conn).await?;
-	info!("🏛 Consensus -  Select Validators and Proposer - Selected Block Proposer for Epoch: {}, Block Proposer: {}", epoch, hex::encode(block_proposer));
-	Ok(())
-}
+// 	let block_proposer = block_proposer_manager.select_block_proposers(epoch, last_block_header, eligible_block_proposers, db_pool_conn).await?;
+// 	info!("🏛 Consensus -  Select Validators and Proposer - Selected Block Proposer for Epoch: {}, Block Proposer: {}", epoch, hex::encode(block_proposer));
+// 	Ok(())
+// }

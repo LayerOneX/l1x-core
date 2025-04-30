@@ -8,33 +8,68 @@ use libp2p_gossipsub::MessageId;
 use log::debug;
 use primitives::*;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, error::Error};
-
+use std::error::Error;
+use secp256k1::{Message, SecretKey};
+use secp256k1::hashes::sha256;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BlockProposerPayload {
-	pub cluster_block_proposers: HashMap<Address, HashMap<Epoch, Address>>,
+	pub cluster_address: Address,
+	pub epoch: Epoch,
+	pub block_proposer_address: Address,
 	pub signature: SignatureBytes,
 	pub verifying_key: VerifyingKeyBytes,
 	// This is a workaround to make the broadcast block_proposer message unique for each node
 	pub sender: Address,
+	pub timestamp: u128,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlockProposerSignaturePayload {
+	pub cluster_address: Address,
+	pub epoch: Epoch,
+	pub block_proposer_address: Address,
+	pub sender: Address,
 }
 
 impl BlockProposerPayload {
+
+	pub async fn generate_signature(&mut self, secret_key: &SecretKey) -> Result<(), AError> {
+
+		let block_proposer_payload_bytes = bincode::serialize(&BlockProposerSignaturePayload{
+			cluster_address: self.cluster_address,
+			epoch: self.epoch,
+			block_proposer_address: self.block_proposer_address,
+			sender: self.sender,
+		}).map_err(|e| anyhow!("Bincode - Unable to serialize block proposer payload: {}", e))?;
+
+		let message_block_proposer_payload = Message::from_hashed_data::<sha256::Hash>(&block_proposer_payload_bytes);
+		let sig_block_proposer_payload = secret_key.sign_ecdsa(message_block_proposer_payload);
+		self.signature = sig_block_proposer_payload.serialize_compact().to_vec();
+		Ok(())
+	}
+	// Verify the signature of the block proposer
 	pub async fn verify_signature(&self) -> Result<(), AError> {
 		let signature_bytes: [u8; 64] = match self.signature.clone().try_into() {
 			Ok(s) => s,
 			Err(_) => return Err(anyhow!("Unable to get signature_bytes")),
 		};
-		let verifying_bytes: [u8; 32] = match self.verifying_key.clone().try_into() {
+		let verifying_bytes: [u8; 33] = match self.verifying_key.clone().try_into() {
 			Ok(v) => v,
 			Err(_) => return Err(anyhow!("Unable to get verifying_bytes")),
 		};
 
 		let signature = get_signature_from_bytes(&signature_bytes)?;
-
 		let public_key = KeySpace::public_key_from_bytes(&verifying_bytes)?;
-		self.cluster_block_proposers
-			.verify_with_ecdsa(&public_key, signature)
+		let block_proposer_payload = bincode::serialize(&BlockProposerSignaturePayload{
+			cluster_address: self.cluster_address,
+			epoch: self.epoch,
+			block_proposer_address: self.block_proposer_address,
+			sender: self.sender,
+		}).map_err(|e| anyhow!("Bincode - Unable to serialize block proposer payload: {}", e))?;
+		
+		let message_block_proposer_payload = Message::from_hashed_data::<sha256::Hash>(&block_proposer_payload);
+
+		signature.verify(&message_block_proposer_payload, &public_key)
 			.map_err(|e| anyhow!("BlockProposerPayload: {}", e))
 	}
 
@@ -52,6 +87,8 @@ pub struct BlockProposer {
 	pub epoch: Epoch,
 	pub address: Address,
 }
+
+// TODO: Fix Siging and Verifying of Block Proposer similar to BlockProposerPayload
 
 impl BlockProposer {
 	/// This is used to verify the signature of the block proposer

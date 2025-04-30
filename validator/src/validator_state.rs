@@ -113,4 +113,15 @@ impl<'a> ValidatorState<'a> {
 				s.create_or_update(validator).await,
 		}
 	}
+
+	pub async fn has_validators_for_epoch(
+		&self,
+		epoch: Epoch,
+	) -> Result<bool, Error> {
+		match &*self.state {
+			StateInternalImpl::StateRock(s) => s.has_validators_for_epoch(epoch).await,
+			StateInternalImpl::StatePg(s) => s.has_validators_for_epoch(epoch).await,
+			StateInternalImpl::StateCas(s) => s.has_validators_for_epoch(epoch).await,
+		}
+	}
 }

@@ -1,25 +1,27 @@
 use account::account_state::AccountState;
 use anyhow::{anyhow, Error};
 use block::{block_manager::BlockManager, block_state::BlockState};
-use block_proposer::block_proposer_manager::BlockProposerManager;
+use block_proposer::{block_proposer_manager::BlockProposerManager, block_proposer_state::BlockProposerState};
 use compile_time_config::SYSTEM_REWARDS_DISTRIBUTOR;
 use db::db::DbTxConn;
 use execute::execute_block::ExecuteBlock;
+// use l1x_vrf::common::ByteOps;
 use log::{debug, info, warn};
 use primitives::{Address, Balance, BlockHash, BlockNumber, EventData, MemPoolSize, TimeStamp};
+use runtime_config::RuntimeConfigCache;
 use secp256k1::{Message, PublicKey, SecretKey};
 use std::collections::{HashMap, HashSet};
 use secp256k1::hashes::sha256;
 use system::{
-	account::Account, network::{BroadcastNetwork, EventBroadcast}, transaction::{Transaction, TransactionType}
+	account::Account, block_header::BlockHeader, block_proposer::{BlockProposerPayload}, network::{BroadcastNetwork, EventBroadcast}, transaction::{Transaction, TransactionType}, validator::{Validator, ValidatorPayload}
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 use execute::execute_fee;
 use system::block::BlockPayload;
 use system::network::{BlockProposerEventType, NetworkAcknowledgement, NetworkMessage};
 use validate::validate_common::ValidateCommon;
-use util::generic::{current_timestamp_in_millis, seconds_to_milliseconds};
-
+use util::generic::{current_timestamp_in_millis, current_timestamp_in_secs, seconds_to_milliseconds};
+use validator::{validator_manager::ValidatorManager, validator_state::ValidatorState};
 pub enum ProposeBlockResult {
 	Proposed(Vec<EventData>),
 	NotProposed,
@@ -429,6 +431,8 @@ impl<'a> Mempool {
 		let block_header = block_state.block_head_header(self.cluster_address.clone()).await?;
 		let block_number = block_header.block_number + 1;
 
+		let last_executed_epoch = block_manager.calculate_current_epoch(block_header.block_number)?;
+
 		// If the previous block is not executed then the transactions in mempool can't be validated so a new block can't be proposed.
 		match block_state.is_block_executed(block_header.block_number, &self.cluster_address).await {
 			Ok(is_exec) => {
@@ -451,7 +455,27 @@ impl<'a> Mempool {
 		}
 
 		let current_epoch = block_manager.calculate_current_epoch(block_number)?;
-		let block_proposer = block_proposer_manager.get_block_proposer_for_epoch(block_number, self.cluster_address, current_epoch, db_pool_conn).await?;
+		
+		match block_proposer_manager.get_block_proposer_for_epoch(self.cluster_address, last_executed_epoch, db_pool_conn).await {
+			Ok(block_proposer) => {
+				// Check if this node was the block proposer for the last executed block
+				info!("💼  Mempool -  Propose Block - Last executed block proposer: {} for epoch {}, block number {}", hex::encode(&block_proposer.address), last_executed_epoch, &block_header.block_number);
+				if block_proposer.address == self.node_address {
+					info!("💼  Mempool -  Propose Block - This node was the block proposer for the last executed block");
+					if self.is_epoch_completion_threshold_reached(block_header.block_number) {
+
+						// Check if Block Proposer is stored in the database
+						let _ = self.handle_epoch_transition(current_epoch, last_executed_epoch, &block_header, db_pool_conn, &network_receive_tx, &secret_key, &verifying_key).await?;
+					}
+				}
+				
+			},
+			Err(e) => {
+				warn!("💼 ⚠️ Mempool -  Propose Block - Failed to get block proposer for epoch: {}", e);
+			}
+		};
+		
+		let block_proposer =  block_proposer_manager.get_block_proposer_for_epoch(self.cluster_address, current_epoch, db_pool_conn).await?;
 
         if block_proposer.address != self.node_address {
             // This node is not the proposer for this epoch
@@ -504,8 +528,7 @@ impl<'a> Mempool {
 		if !self.multinode_mode {
 			self.clear_transactions().await;
 			block_state.store_block(block.clone()).await?;
-			events =
-				ExecuteBlock::execute_block(&block, self.event_tx.clone(), db_pool_conn).await?;
+			events = ExecuteBlock::execute_block(&block, self.event_tx.clone(), db_pool_conn).await?;
 			info!(
 				"💼 🎯  Mempool -  Propose Block - Block Executed, Block Hash - {:?}",
 				hex::encode(block.block_header.block_hash.clone())
@@ -551,9 +574,189 @@ impl<'a> Mempool {
 				}
 			}
 		}
+
+		
+
+		
+
 		Ok(ProposeBlockResult::Proposed(events))
 	}
 
+	fn is_epoch_completion_threshold_reached(&self, current_block_number: BlockNumber) -> bool {
+
+		let block_manager = BlockManager::new();
+		match block_manager.is_epoch_completion_percentage_reached(current_block_number, 90) {
+			Ok(is_reached) => is_reached,
+			Err(e) => {
+				warn!("💼 ⚠️ Mempool -  Propose Block - Failed to check if the epoch transition is reached: {}", e);
+				false
+			}
+		}
+	}
+
+	// Handle Epoch Transition
+	async fn handle_epoch_transition(
+		&self,
+		current_epoch: u64,
+		last_executed_epoch: u64,
+		last_executed_block: &BlockHeader,
+		db_pool_conn: &'a DbTxConn<'a>,
+		network_receive_tx: &mpsc::Sender<NetworkMessage>,
+		secret_key: &SecretKey,
+		verifying_key: &PublicKey,
+	) -> Result<(), Error> {
+		debug!(
+			"💼 Mempool - Handle Epoch Transition - Starting for current_epoch: {}, last_executed_epoch: {}, last_executed_block: {}",
+			current_epoch, last_executed_epoch, last_executed_block.block_number
+		);
+
+		let rt_config = RuntimeConfigCache::get().await?;
+		
+		// Check if Validator is stored in the database
+		let validator_state = ValidatorState::new(db_pool_conn).await?;
+		let is_stored = validator_state.has_validators_for_epoch(current_epoch).await?;
+		
+		let mut selected_validators = vec![];
+		// if validators are stored in the database, load them
+		if is_stored {
+			info!(
+				"💼 Mempool - Handle Epoch Transition - Validators for epoch {} already stored. Rebroadcasting validators to the network",
+				current_epoch
+			);
+			
+			selected_validators = match validator_state.load_all_validators(current_epoch).await {
+				Ok(Some(validators)) => validators,
+				Ok(None) => {
+					warn!("💼 ⚠️ Mempool - Handle Epoch Transition - No validators found for epoch {} despite being marked as stored.",current_epoch);
+					return Err(anyhow::anyhow!("No validators found for epoch: {}", current_epoch));
+				}
+				Err(_) => {
+					warn!("💼 ⚠️ Mempool - Handle Epoch Transition - Failed to load validators for epoch: {}", current_epoch);
+					return Err(anyhow::anyhow!("Failed to load validators for epoch: {}", current_epoch));
+				}
+			};
+		} 
+		else 
+		{
+			// Select validators for the new epoch
+			let validator_manager = ValidatorManager{};
+			selected_validators = validator_manager.select_validators_for_epoch(last_executed_block,current_epoch,db_pool_conn).await?;
+		}
+
+		let mut signed_validator_payload = ValidatorPayload {
+			cluster_address: self.cluster_address,
+			epoch: current_epoch,
+			validators: selected_validators.clone(),
+			signature: Vec::new(),
+			verifying_key: verifying_key.serialize().to_vec(),
+			sender: self.node_address,
+			timestamp: current_timestamp_in_secs()?.into(),
+		};
+
+		// Sign the validator payload
+		signed_validator_payload.generate_signature(secret_key).await?;
+
+		debug!("💼 Mempool - Handle Epoch Transition - Signed validator payload: {:?}", signed_validator_payload);
+
+		let validator_str = &selected_validators.iter().map(|v| hex::encode(v.address)).collect::<Vec<String>>().join(", ");
+		info!(
+			"💼 Mempool - Handle Epoch Transition - Selected new validators for epoch {}: [{}]",
+			current_epoch, validator_str
+		);
+		 
+		// Broadcast the new validators to the network
+		let (validator_sender, _) = oneshot::channel();
+		if let Err(e) = network_receive_tx.send(NetworkMessage::BlockProposerEvent(BlockProposerEventType::AddNewValidators(signed_validator_payload, validator_sender)))
+			.await
+		{
+			warn!(
+				"💼 ⚠️ Mempool - Handle Epoch Transition - Failed to broadcast validators for epoch {}: {:?}",
+				current_epoch, e
+			)
+		}
+		else
+		{
+			info!(
+				"💼 Mempool - Handle Epoch Transition - Successfully broadcasted validators for epoch {}",
+				current_epoch
+			);
+		}
+
+
+		// Check if Block Proposer is stored in the database
+		let block_proposer_state = BlockProposerState::new(db_pool_conn).await?;
+		let is_stored = block_proposer_state.is_block_proposer_stored(self.cluster_address, current_epoch).await?;
+		let mut block_proposer_address = Address::default();
+		
+		if is_stored {
+			info!("💼 Mempool - Handle Epoch Transition - Block Proposer for epoch {} already stored in the database", current_epoch);
+			block_proposer_address = match block_proposer_state.load_block_proposer(self.cluster_address, current_epoch).await {
+				Ok(Some(block_proposer)) => block_proposer.address,
+				Ok(None) => {
+					warn!("💼 ⚠️ Mempool - Handle Epoch Transition - Failed to load block proposer for epoch: {}", current_epoch);
+					return Err(anyhow::anyhow!("Failed to load block proposer for epoch: {}", current_epoch));
+				}
+				Err(e) => {
+					warn!("💼 ⚠️ Mempool - Handle Epoch Transition - Failed to load block proposer for epoch: {}", current_epoch);
+					return Err(anyhow::anyhow!("Failed to load block proposer for epoch: {}", current_epoch));
+				}
+			};
+		}
+		else
+		{
+			// Block Proposer Selection
+			let mut block_proposer_manager = BlockProposerManager{};
+			let mut eligible_block_proposers: Vec<Validator> = vec![];
+
+			// filter out validator based on whitelisted/blacklisted nodes
+			if let Some(whitelisted_block_proposers) = &rt_config.whitelisted_block_proposers {
+				eligible_block_proposers = selected_validators.into_iter()
+					.filter(|v| (whitelisted_block_proposers.contains(&v.address))).collect();
+			} else if let Some(blacklisted_block_proposers) = &rt_config.blacklisted_block_proposers {
+				eligible_block_proposers = selected_validators.into_iter()
+					.filter(|v| (!blacklisted_block_proposers.contains(&v.address))).collect();
+			}
+
+			block_proposer_address = block_proposer_manager.select_block_proposers(current_epoch, last_executed_block, eligible_block_proposers, db_pool_conn).await?;
+			info!("💼 Mempool - Handle Epoch Transition - Selected Block Proposer for Epoch: {}, Block Proposer: {}",current_epoch, hex::encode(block_proposer_address));
+
+		}
+		
+
+		let mut signed_block_proposer_payload = BlockProposerPayload {
+			cluster_address: self.cluster_address,
+			epoch: current_epoch,
+			block_proposer_address: block_proposer_address,
+			signature: Vec::new(),
+			verifying_key: verifying_key.serialize().to_vec(),
+			sender: self.node_address,
+			timestamp: current_timestamp_in_secs()?.into(),
+		};
+		// Sign the block proposer payload
+		signed_block_proposer_payload.generate_signature(secret_key).await?;
+
+		debug!("💼 Mempool - Handle Epoch Transition - Signed block proposer payload: {:?}", signed_block_proposer_payload);
+
+		let (block_proposer_sender, _) = oneshot::channel();
+		if let Err(e) = network_receive_tx.send(NetworkMessage::BlockProposerEvent(BlockProposerEventType::AddNewBlockProposer(signed_block_proposer_payload, block_proposer_sender)))
+			.await
+		{
+			warn!(
+				"💼 ⚠️ Mempool - Handle Epoch Transition - Unable to write block_proposer to network_receive_tx channel: {:?}",
+				e
+			)
+		}
+		else
+		{
+			info!(
+				"💼 Mempool - Handle Epoch Transition - Successfully broadcasted block proposer for epoch {}",
+				current_epoch
+			);
+		}
+
+		Ok(())
+	}
+	
 	async fn build_reward_transactions(
 		&self,
 		block_hash: &BlockHash,

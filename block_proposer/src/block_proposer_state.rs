@@ -169,6 +169,18 @@ impl<'a> BlockProposerState<'a> {
 		}
 	}
 
+	pub async fn is_block_proposer_stored(
+		&self,
+		cluster_address: Address,
+		epoch: Epoch,
+	) -> Result<bool, Error> {
+		match &*self.state {
+			StateInternalImpl::StateRock(s) => s.is_block_proposer_stored(cluster_address, epoch).await,
+			StateInternalImpl::StatePg(s) => s.is_block_proposer_stored(cluster_address, epoch).await,
+			StateInternalImpl::StateCas(s) => s.is_block_proposer_stored(cluster_address, epoch).await,
+		}
+	}
+
 	pub async fn load_block_proposers(
 		&self,
 		cluster_address: &Address,

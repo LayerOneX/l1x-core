@@ -66,4 +66,8 @@ impl ValidatorState for StateRock {
 	async fn create_or_update(&self, _validators: &Validator) -> Result<(), Error> {
 		Err(anyhow!("Not supported"))
 	}
+
+	async fn has_validators_for_epoch(&self, _epoch: Epoch) -> Result<bool, Error> {
+		Err(anyhow!("Not supported"))
+	}
 }

@@ -15,7 +15,7 @@ use primitives::{Address, Epoch};
 use std::collections::HashMap;
 use system::block_proposer::BlockProposer;
 use util::convert::convert_to_big_decimal_epoch;
-use log::debug;
+use log::{debug, warn};
 
 pub struct StatePg<'a> {
 	pub(crate) pg: &'a PostgresDBConn<'a>,
@@ -113,9 +113,22 @@ impl<'a> BlockProposerState for StatePg<'a> {
 		epoch: Epoch,
 		address: Address,
 	) -> Result<(), Error> {
-		let new_blk_proposer = BlockProposer { cluster_address, address, epoch };
-		self.create(&new_blk_proposer).await?;
-		debug!("New block proposer created successfully.");
+
+		// Check if the block proposer already exists
+		let block_proposer_exists = match self.load_block_proposer(cluster_address, epoch).await {
+			Ok(Some(_)) => true,
+			Ok(None) => false,
+			Err(_) => false,
+		};
+
+		if !block_proposer_exists {
+			let new_blk_proposer = BlockProposer { cluster_address, address, epoch };
+			self.create(&new_blk_proposer).await?;
+			debug!("New block proposer created successfully.");
+		}
+		else {
+			warn!("Block proposer already exists for cluster address: {:?}, epoch: {:?}, address: {:?}", cluster_address, epoch, address);
+		}
 		Ok(())
 	}
 
@@ -197,8 +210,8 @@ impl<'a> BlockProposerState for StatePg<'a> {
 	async fn store_block_proposers(
 		&self,
 		block_proposers: &HashMap<Address, HashMap<Epoch, Address>>,
-		_selector_address: Option<Address>,
-		_cluster_address: Option<Address>,
+		selector_address: Option<Address>,
+		cluster_address: Option<Address>,
 	) -> Result<(), Error> {
 		for (cluster_address, epoch_numbers) in block_proposers {
 			for (epoch, address) in epoch_numbers {
@@ -238,6 +251,45 @@ impl<'a> BlockProposerState for StatePg<'a> {
 		};
 
 		Ok(epoch_u64)
+	}
+
+	async fn is_block_proposer_stored(
+		&self,
+		_cluster_address: Address,
+		_epoch: Epoch,
+	) -> Result<bool, Error> { // Should return Ok(bool) or Err(DatabaseError)
+		use db::postgres::schema::block_proposer::dsl::*;
+		use diesel::result::Error as DieselError; // Import Diesel error type
+
+		let encoded_cluster_address = hex::encode(_cluster_address);
+		let current_epoch = convert_to_big_decimal_epoch(_epoch);
+
+		let query = block_proposer
+			.filter(cluster_address.eq(&encoded_cluster_address)
+			.and(epoch.eq(&current_epoch)));
+
+		let res: QueryResult<bool> = match &self.pg.conn { // Check for existence using count or select(1) for efficiency
+			PgConnectionType::TxConn(conn) => {
+				 use diesel::dsl::select;
+				 use diesel::dsl::exists;
+				 select(exists(query)).get_result(*conn.lock().await) // Check existence
+			}
+			PgConnectionType::PgConn(conn) => {
+				 use diesel::dsl::select;
+				 use diesel::dsl::exists;
+				 select(exists(query)).get_result(&mut *conn.lock().await) // Check existence
+			}
+		};
+
+
+		match res {
+			// Ok(true) implies the record exists
+			Ok(exists) => Ok(exists),
+			// Specifically handle NotFound if needed, though exists() typically returns Ok(false) instead
+			Err(DieselError::NotFound) => Ok(false), // Treat NotFound as false
+			// Any other error is a real DB error
+			Err(e) => Err(e.into()), // Propagate other database errors
+		}
 	}
 
 	async fn load_block_proposer(

@@ -25,4 +25,8 @@ pub trait ValidatorState {
 		validator: &Validator
 	) -> Result<(), Error>;
 
+	async fn has_validators_for_epoch(
+		&self,
+		epoch: Epoch,
+	) -> Result<bool, Error>;
 }

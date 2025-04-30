@@ -201,6 +201,15 @@ impl BlockProposerState for StateRock {
 		Ok(max_epoch)
 	}
 
+	// TODO: Implement this
+	async fn is_block_proposer_stored(
+		&self,
+		cluster_address: Address,
+		epoch: Epoch,
+	) -> Result<bool, Error> {
+		todo!()
+	}
+	
 	async fn load_block_proposer(
 		&self,
 		cluster_address: Address,

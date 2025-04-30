@@ -1,6 +1,6 @@
 use std::error::Error;
 use crate::{
-	block::{BlockPayload, L1xResponse, QueryBlockMessage}, block_proposer::BlockProposerPayload, node_health::NodeHealthPayload, node_status::NodeDetailedStatus, transaction::Transaction, vote::Vote, vote_result::VoteResult
+	block::{BlockPayload, L1xResponse, QueryBlockMessage}, block_proposer::BlockProposerPayload, node_health::NodeHealthPayload, node_status::NodeDetailedStatus, transaction::Transaction, validator::ValidatorPayload, vote::Vote, vote_result::VoteResult
 };
 use primitive_types::{H160, H256};
 use primitives::*;
@@ -17,6 +17,7 @@ pub enum BroadcastNetwork {
 	BroadcastTransaction(Transaction),
 	BroadcastValidateBlock(BlockPayload),
 	BroadcastBlockProposer(BlockProposerPayload),
+	BroadcastValidators(ValidatorPayload),
 	BroadcastVote(Vote),
 	BroadcastVoteResult(VoteResult),
 	BroadcastQueryBlockRequest(QueryBlockMessage, PeerId),
@@ -24,7 +25,7 @@ pub enum BroadcastNetwork {
 	BroadcastSignedNodeHealth(Vec<NodeHealthPayload>),
 	BroadcastNodeHealth(Vec<NodeHealth>),
 	BroadcastQueryNodeStatusRequest(TimeStamp, PeerId),
-	BroadcastNodeDetailedStatus(NodeDetailedStatus),
+	BroadcastNodeDetailedStatus(NodeDetailedStatus)
 }
 
 #[derive(Debug)]
@@ -38,6 +39,7 @@ pub enum NetworkEventType {
 	ReceiveNodeInfo(NodeInfo),
 	ReceiveValidateBlock(BlockPayload),
 	ReceiveBlockProposer(BlockProposerPayload),
+	ReceiveValidators(ValidatorPayload),
 	ReceiveVote(Vote),
 	ReceiveVoteResult(VoteResult),
 	ReceiveQueryBlockResponse(BlockPayload, Option<VoteResult>),
@@ -56,7 +58,8 @@ pub enum NetworkEventType {
 #[derive(Debug)]
 pub enum BlockProposerEventType {
 	AddBlock(BlockPayload, oneshot::Sender<Result<NetworkAcknowledgement, Box<dyn Error + Send>>>),
-
+	AddNewBlockProposer(BlockProposerPayload, oneshot::Sender<Result<NetworkAcknowledgement, Box<dyn Error + Send>>>),
+	AddNewValidators(ValidatorPayload, oneshot::Sender<Result<NetworkAcknowledgement, Box<dyn Error + Send>>>),
 }
 
 #[derive(Debug, Clone)]

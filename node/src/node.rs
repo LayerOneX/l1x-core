@@ -1,4 +1,5 @@
 use crate::sync::{multiaddrs_to_http_urls, sync_node};
+use compile_time_config::config::SLOTS_PER_EPOCH;
 use consensus::consensus::Consensus;
 use db::db::{Database, DbTxConn};
 use l1x_rpc::rpc_model::node_client::NodeClient;
@@ -19,7 +20,7 @@ use std::{
 use std::str::FromStr;
 use anyhow::Error;
 use system::{
-	account::Account, block::{Block, BlockBroadcast, BlockQueryRequest, BroadcastNodeDetailedStatus, L1xResponse, QueryBlockResponse}, block_proposer::BlockProposerBroadcast, config::MpscConfig, dht_health_storage::DHTHealthStorage, mempool::{ProcessMempool, ResponseMempool}, network::{BroadcastNetwork, EventBroadcast, NetworkMessage}, node_health::{AggregatedNodeHealthBroadcast, NodeHealthBroadcast}, node_info::{NodeInfoBroadcast, NodeInfoSignPayload}, transaction::TransactionBroadcast, vote::VoteBroadcast, vote_result::VoteResultBroadcast
+	account::Account, block::{Block, BlockBroadcast, BlockQueryRequest, BroadcastNodeDetailedStatus, L1xResponse, QueryBlockResponse}, block_proposer::BlockProposerBroadcast, validator::ValidatorsBroadcast, config::MpscConfig, dht_health_storage::DHTHealthStorage, mempool::{ProcessMempool, ResponseMempool}, network::{BroadcastNetwork, EventBroadcast, NetworkMessage}, node_health::{AggregatedNodeHealthBroadcast, NodeHealthBroadcast}, node_info::{NodeInfoBroadcast, NodeInfoSignPayload}, transaction::TransactionBroadcast, vote::VoteBroadcast, vote_result::VoteResultBroadcast
 };
 use tokio::{
 	sync::{broadcast, mpsc, Mutex},
@@ -43,6 +44,8 @@ use l1x_node_health::NodeHealthState;
 use system::validator::Validator;
 use validator::validator_state::ValidatorState;
 use anyhow::anyhow;
+use primitives::BlockNumber; // Ensure BlockNumber and EPOCH_LENGTH are imported
+
 
 #[derive(Debug, Clone)]
 pub struct FullNode {
@@ -458,7 +461,8 @@ impl <'a> FullNode {
 
 						info!("🔍 Node - Syncing | Node health sync successful ✅");
 						// Update block_proposer and validators for current epoch
-						update_block_proposer_and_validator(bootnodes, latest_epoch, cluster_address)
+						let bootnodes_clone = bootnodes.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+						update_block_proposer_and_validator(bootnodes_clone, latest_epoch, cluster_address)
 							.await
 							.unwrap_or_else(|err| panic!("🚨 Node - Syncing | Unable to sync Block proposer and validators for epoch {}: {:?}", latest_epoch, err));
 						info!("🔍 Node - Syncing | Block proposer and validators sync successful ✅");
@@ -493,6 +497,16 @@ impl <'a> FullNode {
 				).await.expect("🚨 Node - Network | Failed to start node health monitoring");
 
 			
+				// ---- Start Proactive Proposer Sync Task ----
+				// let cluster_address_clone = cluster_address.clone();
+				// let bootnodes_clone = bootnodes.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+				// tokio::spawn(run_proactive_proposer_sync(
+				// 	cluster_address_clone,
+				// 	bootnodes_clone,
+				// ));
+				// info!("🔍 Node - Proactive Sync | Started background task for proactive proposer sync.");
+				// ---- End Proactive Proposer Sync Task ----
+
 			}
 
 			(full_node, mempool_res_rx)
@@ -622,6 +636,14 @@ impl <'a> FullNode {
 								.await
 							{
 								warn!("🚨 Node - Event | Unable to write block_payload to network_receive_tx channel: {:?}", e)
+							}
+						},
+						Event::InboundValidators { validator_payload } => {
+							if let Err(e) = network_receive_tx
+								.send(NetworkMessage::NetworkEvent(NetworkEventType::ReceiveValidators(validator_payload)))
+								.await
+							{
+								warn!("🚨 Node - Event | Unable to write validator_payload to network_receive_tx channel: {:?}", e)
 							}
 						},
 						Event::InboundVote { vote } => {
@@ -1082,6 +1104,14 @@ impl <'a> FullNode {
 						},
 					};
 				},
+				BroadcastNetwork::BroadcastValidators(validator_payload) => {
+					match network_client.validators_broadcast(validator_payload).await {
+						Ok(_) => {},
+						Err(e) => {
+							warn!("⚠️ Node - Block Production | Unable to broadcast validators using network_client: {:?}", e);
+						},
+					};
+				},
 				BroadcastNetwork::BroadcastVote(vote) => {
 					match network_client.vote_broadcast(vote).await {
 						Ok(_) => {},
@@ -1218,6 +1248,7 @@ impl <'a> FullNode {
 				NetworkMessage::BlockProposerEvent(block_proposer_event_type) => {
 					FullNode::handle_block_proposer_event_type(block_proposer_event_type, &mut consensus,  &db_pool_conn).await;
 				},
+
 			}
 		}
 
@@ -1244,6 +1275,24 @@ impl <'a> FullNode {
 						{
 							warn!("🚨 Node - Receive Network | Handle Block Proposer Event Type | Unable to write acknowledgement to network_receive_tx_ack channel: {:?}", e)
 						}
+					},
+				};
+			},
+			BlockProposerEventType::AddNewBlockProposer(block_proposer_payload, _) => {
+				info!("🔍 ℹ️ 🔗 Node - Receive Network | Handle Block Proposer Event Type | I just received a new Block Proposer from the network");
+				match consensus.add_new_block_proposer(block_proposer_payload).await {
+					Ok(_) => {},
+					Err(e) => {
+						warn!("🚨 Node - Receive Network | Handle Block Proposer Event Type | Add new block proposer and validators failed: {:?}", e);
+					},
+				};		
+			},
+			BlockProposerEventType::AddNewValidators(validator_payload, _) => {
+				info!("🔍 ℹ️ 🔗 Node - Receive Network | Handle Block Proposer Event Type | I just received a new Validators from the network");
+				match consensus.add_new_validators(validator_payload).await {
+					Ok(_) => {},
+					Err(e) => {
+						warn!("🚨 Node - Receive Network | Handle Block Proposer Event Type | Add new validators failed: {:?}", e);
 					},
 				};
 			},
@@ -1279,6 +1328,15 @@ impl <'a> FullNode {
 					Ok(_res) => {},
 					Err(e) => {
 						warn!("🚨 Node - Receive Network | Handle Network Event Type | Received block_proposer_payload failed validation: {:?}", e);
+					},
+				};
+			},
+			NetworkEventType::ReceiveValidators(validator_payload) => {
+				info!("🔍 ℹ️ 🔗 Node - Receive Network | Handle Network Event Type | I just received a new Validators from the network, From: {}", hex::encode(&validator_payload.sender));
+				match consensus.receive_validators(validator_payload, &db_pool_conn).await {
+					Ok(_res) => {},
+					Err(e) => {
+						warn!("🚨 Node - Receive Network | Handle Network Event Type | Received validator_payload failed validation: {:?}", e);
 					},
 				};
 			},
@@ -1642,18 +1700,64 @@ pub async fn update_node_healths(
 	Ok(())
 }
 
+
+
+
+
 async fn update_block_proposer_and_validator(
-    bootnodes: &[&str], 
+    bootnodes: Vec<String>, 
     epoch: Epoch, 
     cluster_address: Address
 ) -> Result<(), Error> {
-    // Connect to bootnodes
-    let grpc_clients = grpc_connect_bootnodes(bootnodes).await?;
-    let db_pool_conn = Database::get_pool_connection().await?;
-    
-    // Collect responses from all bootnodes
+
+	debug!("🔍 ℹ️ 🔗 Node - Update Block Proposer and Validators | Epoch: {}, Cluster Address: {}, Bootnodes: {:?}", epoch, hex::encode(cluster_address), bootnodes);
+   
+	let db_pool_conn = Database::get_pool_connection().await?;
+
+	// Update block proposer and validators from bootnodes
+	match update_block_proposer_from_bootnode(bootnodes.clone(), epoch, cluster_address, &db_pool_conn).await {
+		Ok(_) => (),
+		Err(e) => {
+			warn!("🚨 Node - Update Block Proposer and Validators | Failed to update block proposer: {}", e);
+		}
+	}
+	
+	match update_validators_from_bootnode(bootnodes, epoch, cluster_address, &db_pool_conn).await {
+		Ok(_) => (),
+		Err(e) => {
+			warn!("🚨 Node - Update Block Proposer and Validators | Failed to update validators: {}", e);
+		}
+	}
+
+    Ok(())
+}
+
+async fn update_block_proposer_from_bootnode<'a>(
+	bootnodes: Vec<String>,
+	epoch: Epoch,
+	cluster_address: Address,
+	db_pool_conn: &'a DbTxConn<'a>
+)  -> Result<(), Error> {
+	// Check if the block proposer is stored in the database
+	let block_proposer_state = BlockProposerState::new(&db_pool_conn).await?;
+	let block_proposer_exists = match block_proposer_state.is_block_proposer_stored(cluster_address, epoch).await {
+		Ok(exists) => exists,
+		Err(e) => {
+			warn!("🔍 ℹ️ 🔗 Node - Update Block Proposer from Bootnode | Failed to check if block proposer exists for epoch {}: {}", epoch, e);
+			false
+		}
+	};
+
+	if block_proposer_exists {
+		info!("🔍 ℹ️ 🔗 Node - Update Block Proposer from Bootnode | Block proposer already exists for epoch {}, skipping", epoch);
+		return Ok(());
+	}
+
+	let bootnodes_str = bootnodes.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
+	let grpc_clients = grpc_connect_bootnodes(&bootnodes_str).await?;
+
+	// Collect responses from all bootnodes
     let mut proposer_responses = Vec::new();
-    let mut validator_responses = Vec::new();
     let mut successful_connections = 0;
     
     // For each bootnode
@@ -1667,9 +1771,65 @@ async fn update_block_proposer_and_validator(
             successful_connections += 1;
         }
         
-        // 2. Try to get validators with simple retry
+    }
+
+    // Make sure we have enough connections for quorum
+    let quorum_threshold = match successful_connections {
+        1 => 1,  // Single bootnode - trust it
+        2 => 1,  // Two bootnodes - trust if at least one agrees
+        _ => (successful_connections / 2) + 1  // Three or more - use majority
+    };
+
+    debug!("🔍 ℹ️ 🔗 Node - Update Block Proposer from Bootnode | Quorum threshold: {}, Successful connections: {}", quorum_threshold, successful_connections);
+    // Only fail if we have no successful connections
+    if successful_connections == 0 {
+        return Err(anyhow!("🚨 Node - Update Block Proposer from Bootnode | No successful connections to any bootnode"));
+    }
+
+    // 3. Process block proposers - find the most common one
+    let most_common_proposer = find_most_common_proposer(&proposer_responses, quorum_threshold)?;
+    debug!("🔍 ℹ️ 🔗 Node - Update Block Proposer from Bootnode | Most common proposer: {}", hex::encode(most_common_proposer.unwrap()));
+    // 4. Update block proposer if we have a quorum
+    if let Some(proposer_address) = most_common_proposer {
+        let block_proposer_state = BlockProposerState::new(&db_pool_conn).await?;
+        block_proposer_state.upsert_block_proposer(
+            cluster_address,
+            epoch,
+            proposer_address
+        ).await?;
+        info!("🔍 ℹ️ 🔗 Node - Update Block Proposer from Bootnode | Block proposer updated with quorum: {}", hex::encode(proposer_address));
+    } else {
+        warn!("🔍 ℹ️ 🔗 Node - Update Block Proposer from Bootnode | No quorum reached for block proposer selection");
+    }
+
+	Ok(())
+}
+
+async fn update_validators_from_bootnode<'a>(
+	bootnodes: Vec<String>,
+	epoch: Epoch,
+	cluster_address: Address,
+	db_pool_conn: &'a DbTxConn<'a>
+) -> Result<(), Error> {
+
+	debug!("🔍 ℹ️ 🔗 Node - Update Validators from Bootnode | Epoch: {}, Cluster Address: {}, Bootnodes: {:?}", epoch, hex::encode(cluster_address), bootnodes);
+    // Connect to bootnodes
+	let bootnodes_str = bootnodes.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
+    let grpc_clients = grpc_connect_bootnodes(&bootnodes_str).await?;
+    
+    // Collect responses from all bootnodes
+    let mut validator_responses = Vec::new();
+    let mut successful_connections = 0;
+    
+    // For each bootnode
+    for client_mutex in &grpc_clients {
+        let mut client_guard = client_mutex.lock().await;
+        let (grpc_client, endpoint) = &mut *client_guard;
+        
+        //  Try to get validators with simple retry
         if let Some(response) = try_get_validators(grpc_client, endpoint, epoch).await {
             validator_responses.push(response);
+			successful_connections += 1;
         }
     }
 
@@ -1680,37 +1840,32 @@ async fn update_block_proposer_and_validator(
         _ => (successful_connections / 2) + 1  // Three or more - use majority
     };
 
+    debug!("🔍 ℹ️ 🔗 Node - Update Validators from Bootnode | Quorum threshold: {}, Successful connections: {}", quorum_threshold, successful_connections);
     // Only fail if we have no successful connections
     if successful_connections == 0 {
-        return Err(anyhow!("No successful connections to any bootnode"));
+        return Err(anyhow!("🚨 Node - Update Validators from Bootnode | No successful connections to any bootnode"));
     }
 
-    // 3. Process block proposers - find the most common one
-    let most_common_proposer = find_most_common_proposer(&proposer_responses, quorum_threshold)?;
-    
-    // 4. Update block proposer if we have a quorum
-    if let Some(proposer_address) = most_common_proposer {
-        let block_proposer_state = BlockProposerState::new(&db_pool_conn).await?;
-        block_proposer_state.upsert_block_proposer(
-            cluster_address,
-            epoch,
-            proposer_address
-        ).await?;
-        info!("Block proposer updated with quorum: {}", hex::encode(proposer_address));
-    } else {
-        warn!("No quorum reached for block proposer selection");
-    }
 
     // 5. Process validators - find the ones that appear in majority of responses
-    let validators_with_quorum = find_validators_with_quorum(&validator_responses, quorum_threshold)?;
-    
+    let validators_with_quorum = find_validators_with_quorum(&validator_responses, epoch,quorum_threshold)?;
+   
+	if validators_with_quorum.is_empty() {
+		warn!("🔍 ℹ️ 🔗 Node - Update Validators from Bootnode | No validators with quorum");
+	}
+	else {
+		validators_with_quorum.iter().for_each(|validator| {
+			info!("🔍 ℹ️ 🔗 Node - Update Validators from Bootnode | Validator: {}, Cluster Address: {}, Epoch: {}, Stake: {}, XScore: {}", hex::encode(validator.address), hex::encode(validator.cluster_address), validator.epoch, validator.stake, validator.xscore);
+		});
+	}
+   
     // 6. Update validators if we have any with quorum
     if !validators_with_quorum.is_empty() {
         let validator_state = ValidatorState::new(&db_pool_conn).await?;
         validator_state.batch_store_validators(&validators_with_quorum).await?;
-        info!("Validators updated with quorum: {} validators", validators_with_quorum.len());
+        info!("🔍 ℹ️ 🔗 Node - Update Validators from Bootnode | Validators updated with quorum: {} validators", validators_with_quorum.len());
     } else {
-        warn!("No quorum reached for validator selection");
+        warn!("🔍 ℹ️ 🔗 Node - Update Validators from Bootnode | No quorum reached for validator selection");
     }
 
     Ok(())
@@ -1756,15 +1911,18 @@ async fn try_get_validators(
     
     for attempt in 0..3 {
         match grpc_client.get_validators_for_epoch(request.clone()).await {
-            Ok(response) => return Some(response.into_inner()),
+            Ok(response) => {
+				debug!("🔍 ℹ️ 🔗 Node - Try Get Validators | Got validators from {} for epoch {}", endpoint, epoch);
+				return Some(response.into_inner());
+			},
             Err(e) => {
                 if attempt < 2 {
                     // Simple backoff: wait longer for each retry
                     let delay = (attempt + 1) * 1000;
                     tokio::time::sleep(Duration::from_millis(delay as u64)).await;
-                    warn!("Failed to get validators from {} (retry {}/3): {}", endpoint, attempt + 1, e);
+                    warn!("🔍 ℹ️ 🔗 Node - Try Get Validators | Failed to get validators from {} (retry {}/3): {}", endpoint, attempt + 1, e);
                 } else {
-                    warn!("Failed to get validators from {} after 3 attempts: {}", endpoint, e);
+                    warn!("🔍 ℹ️ 🔗 Node - Try Get Validators | Failed to get validators from {} after 3 attempts: {}", endpoint, e);
                 }
             }
         }
@@ -1804,19 +1962,26 @@ fn find_most_common_proposer(
 // Find validators that appear in enough responses to meet quorum
 fn find_validators_with_quorum(
     responses: &[l1x_rpc::rpc_model::GetValidatorsForEpochResponse],
+    epoch: Epoch,
     quorum_threshold: usize
 ) -> Result<Vec<Validator>, Error> {
     let mut validator_counts = HashMap::new();
     let mut validator_details = HashMap::new();
     
-    // Count each validator and store details
-    for response in responses {
-        for validators_for_epoch in &response.validators_for_epochs {
-            for validator in &validators_for_epoch.validators {
-                *validator_counts.entry(validator.address.clone()).or_insert(0) += 1;
-                validator_details.insert(validator.address.clone(), validator.clone());
-            }
-        }
+	// Flatten all validators from all responses and filter by the specified epoch
+    let filtered_validators: Vec<&l1x_rpc::rpc_model::Validator> = responses
+        .iter()
+        .flat_map(|resp| &resp.validators_for_epochs)
+        .flat_map(|vfe| &vfe.validators) // Flatten the inner validator list
+        .filter(|validator| validator.epoch == epoch) // Filter individual validators
+        .collect();
+	
+   
+	// Count each validator and store details from the filtered list
+	debug!("🔍 ℹ️ 🔗 Node - Find Validators With Quorum | Filtered validators: {:?}", filtered_validators);
+    for validator in filtered_validators {
+        *validator_counts.entry(validator.address.clone()).or_insert(0) += 1;
+        validator_details.insert(validator.address.clone(), validator.clone());
     }
     
     // Collect validators that meet quorum
@@ -1941,3 +2106,122 @@ pub async fn grpc_connect_bootnodes(
 
 	Ok(grpc_clients)
 }
+
+// ---- Revised Constant ----
+// Interval for checking if we should fetch the next proposer.
+// Needs to be short relative to epoch length (100 blocks).
+// Example: If block time is ~2s, 10s interval gives ~5 chances per epoch.
+const PROPOSER_CHECK_INTERVAL_SECONDS: u64 = 30; // Make this configurable
+
+// ---- Revised Proactive (Just-In-Time) Proposer Sync Function ----
+async fn run_proactive_proposer_sync(
+    cluster_address: Address,
+    bootnodes: Vec<String>, // Pass bootnodes for fetching
+) {
+    info!("🔍 Node - JIT Sync | Background task starting. Check interval: {}s, Epoch length: {}", PROPOSER_CHECK_INTERVAL_SECONDS, SLOTS_PER_EPOCH);
+
+	// --- Database and State Setup ---
+	let db_conn = match Database::get_pool_connection().await {
+		Ok(conn) => conn,
+		Err(e) => {
+			error!("🚨 Node - JIT Sync | Failed to get DB connection: {}", e);
+			return; // Skip this cycle
+		}
+	};
+
+    
+    loop {
+        tokio::time::sleep(Duration::from_secs(PROPOSER_CHECK_INTERVAL_SECONDS)).await;
+        // Removed debug log for periodic check to reduce noise given the frequency
+
+        let block_state = match BlockState::new(&db_conn).await {
+            Ok(state) => state,
+            Err(e) => {
+                error!("🚨 Node - JIT Sync | Failed to create BlockState: {}", e);
+                continue;
+            }
+        };
+
+        let proposer_state = match BlockProposerState::new(&db_conn).await {
+            Ok(state) => state,
+            Err(e) => {
+                error!("🚨 Node - JIT Sync | Failed to create BlockProposerState: {}", e);
+                continue;
+            }
+        };
+		
+		let validator_state = match ValidatorState::new(&db_conn).await {
+			Ok(state) => state,
+			Err(e) => {
+				error!("🚨 Node - JIT Sync | Failed to create ValidatorState: {}", e);
+				continue;
+			}
+		};
+
+        // --- Get Current State ---
+        let (block_number, current_epoch) = match block_state.block_head_header(cluster_address).await {
+            Ok(header) => (header.block_number, header.epoch),
+            Err(e) => {
+                warn!("🚨 Node - JIT Sync | Could not get current head block header: {}. Skipping check.", e);
+                continue; // Skip if we can't get the current head
+            }
+        };
+
+		let block_manager = BlockManager::new();
+		let next_block_number = block_number + 1;
+		let potential_next_epoch = match block_manager.calculate_current_epoch(next_block_number) {
+			Ok(epoch) => epoch,
+			Err(e) => {
+				warn!("🚨 Node - JIT Sync | Failed to calculate potential next epoch: {}", e);
+				continue;
+			}
+		};
+
+		if(potential_next_epoch < current_epoch) {
+			info!("🔍 Node - JIT Sync | Potential next epoch is less than current epoch. Skipping check, current epoch: {}, potential next epoch: {}", current_epoch, potential_next_epoch);
+			continue;
+		}
+
+		// Check if Block Proposer exists for current epoch
+		let mut has_error_checking_block_proposer = false;
+		let block_proposer_exists_for_current_epoch = match proposer_state.is_block_proposer_stored(cluster_address, potential_next_epoch).await {
+			Ok(exists) => exists,
+			Err(e) => {
+				warn!("🚨 Node - JIT Sync | Failed to check if block proposer exists for current epoch: {}", e);
+				has_error_checking_block_proposer = true;
+				false
+			}
+		};
+
+		let bootnodes_clone = bootnodes.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+
+		if !has_error_checking_block_proposer && !block_proposer_exists_for_current_epoch {
+			info!("🔍 Node - JIT Sync | Block proposer does not exist for current epoch. Attempting fetch...");
+			match update_block_proposer_from_bootnode(bootnodes_clone.clone(), potential_next_epoch, cluster_address, &db_conn).await {
+				Ok(_) => info!("✅ Node - JIT Sync | Successfully fetched and stored proposer/validators for epoch {}.", potential_next_epoch),
+				Err(e) => warn!("⚠️ Node - JIT Sync | Failed to fetch proposer/validators for epoch {}: {}", potential_next_epoch, e),
+			}
+		}
+
+		// Check if Validators exist for current epoch
+		let mut has_error_checking_validators = false;
+		let validators_exist_for_current_epoch = match validator_state.has_validators_for_epoch(potential_next_epoch).await {
+			Ok(exists) => exists,
+			Err(e) => {
+				warn!("� Node - JIT Sync | Failed to check if validators exist for current epoch: {}", e);
+				has_error_checking_validators = true;
+				false
+			}
+		};
+
+		if !has_error_checking_validators && !validators_exist_for_current_epoch {
+			info!("🔍 Node - JIT Sync | Validators do not exist for current epoch. Attempting fetch...");
+			match update_validators_from_bootnode(bootnodes_clone, potential_next_epoch, cluster_address, &db_conn).await {
+				Ok(_) => info!("✅ Node - JIT Sync | Successfully fetched and stored proposer/validators for epoch {}.", potential_next_epoch),
+				Err(e) => warn!("⚠️ Node - JIT Sync | Failed to fetch proposer/validators for epoch {}: {}", potential_next_epoch, e),
+			}
+		}
+    }
+    // Note: This loop runs indefinitely. In a real implementation, consider adding a shutdown signal.
+}
+// ---- End Revised Function ----

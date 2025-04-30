@@ -55,4 +55,10 @@ pub trait BlockProposerState {
 		_epoch: Epoch,
 		_address: Address,
 	) -> Result<(), Error>;
+
+	async fn is_block_proposer_stored(
+		&self,
+		cluster_address: Address,
+		epoch: Epoch,
+	) -> Result<bool, Error>;
 }

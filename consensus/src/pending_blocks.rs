@@ -29,7 +29,7 @@ use vote_result::vote_result_state::VoteResultState;
 use validator::validator_state::ValidatorState;
 use node_info::node_info_state::NodeInfoState;
 use libp2p::PeerId;
-use crate::consensus::select_and_store_validators_and_proposer;
+// use crate::consensus::select_and_store_validators_and_proposer;
 use runtime_config::RuntimeConfigCache;
 use p2p::network::NetworkState;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -220,38 +220,38 @@ impl<'a> PendingBlock {
 		ValidateBlock::validate_proposed_block(&block_payload, &db_pool_conn, self.cluster_address.clone(), last_block_votes_validators)
 			.await?;
 
-		// select validators if not present
+		// // select validators if not present
 		let validator_state = ValidatorState::new(&db_pool_conn).await?;
-		let mut validators = validator_state
+		let validators = validator_state
 			.load_all_validators(block_payload.block.block_header.epoch)
 			.await?
 			.ok_or(anyhow!("🤝 Consensus | Epoch {} | Validator Selection Failed | No Validators Found", block_payload.block.block_header.epoch))?;
 
 		
-		let mut added_org_nodes = 0;
-		for org_node in rt_config.org_nodes.iter()
-			// .filter(|n| self.network_state.is_peer_available(n))
-			.filter(|n| !validators.iter().any(|v| &v.address == *n))
-		{
-			let backup_validator = Validator {
-				address: *org_node,
-				cluster_address: self.cluster_address,
-				epoch: block_payload.block.block_header.epoch,
-				stake: 0,
-				xscore: 1.0,
-			};
-			validator_state.upsert_validator(&backup_validator).await?;
-			added_org_nodes += 1;
-		}
+		// let mut added_org_nodes = 0;
+		// for org_nodex in rt_config.org_nodes.iter()
+		// 	// .filter(|n| self.network_state.is_peer_available(n))
+		// 	.filter(|n| !validators.iter().any(|v| &v.address == *n))
+		// {
+		// 	let backup_validator = Validator {
+		// 		address: *org_node,
+		// 		cluster_address: self.cluster_address,
+		// 		epoch: block_payload.block.block_header.epoch,
+		// 		stake: 0,
+		// 		xscore: 1.0,
+		// 	};
+		// 	validator_state.upsert_validator(&backup_validator).await?;
+		// 	added_org_nodes += 1;
+		// }
 
-		if added_org_nodes > 0 {
-			debug!("🤝 Consensus | Added Backup Validators | Count: {} | Type: Org Nodes", added_org_nodes);
-			// Reload validators with new backups
-			validators = validator_state
-				.load_all_validators(block_payload.block.block_header.epoch)
-				.await?
-				.ok_or(anyhow!("🤝 Consensus | Epoch {} | Validator Selection Failed | No Validators After Backup Addition", block_payload.block.block_header.epoch))?;
-		}
+		// if added_org_nodes > 0 {
+		// 	debug!("🤝 Consensus | Added Backup Validators | Count: {} | Type: Org Nodes", added_org_nodes);
+		// 	// Reload validators with new backups
+		// 	validators = validator_state
+		// 		.load_all_validators(block_payload.block.block_header.epoch)
+		// 		.await?
+		// 		.ok_or(anyhow!("🤝 Consensus | Epoch {} | Validator Selection Failed | No Validators After Backup Addition", block_payload.block.block_header.epoch))?;
+		// }
 
 		
 		let block_proposer_address = Account::address(&self.verifying_key.serialize().to_vec())?;
@@ -340,23 +340,24 @@ impl<'a> PendingBlock {
 
 		if let Some(vote_result) = passed_vote_result {
 			// calculating new block proposer
-			let block_manager = BlockManager{};
-			let block_number = block_payload.block.block_header.block_number + 1;
-			let new_epoch = block_manager.calculate_current_epoch(block_number)?;
+			
+			// let block_manager = BlockManager{};
+			// let block_number = block_payload.block.block_header.block_number + 5;
+			// let new_epoch = block_manager.calculate_current_epoch(block_number)?;
 					
-			if new_epoch > block_payload.block.block_header.epoch {
+			// if new_epoch > block_payload.block.block_header.epoch {
 		
-				debug!("🤝 Consensus | Block #{} | Epoch {} | End of Epoch | Attempting Proposer Selection", block_number, new_epoch);
-				// let last_block_header = {
-				// 	let block_state = BlockState::new(db_pool_conn).await?;
-				// 	block_state.block_head_header(block_payload.block.block_header.cluster_address).await?
-				// };
-				select_and_store_validators_and_proposer(
-					new_epoch,
-					&block_payload.block.block_header,
-					db_pool_conn
-				).await.map_err(|error| anyhow!("🤝 Consensus | Block #{} | Epoch {} | Proposer Selection Failed | Error: {}", block_number, new_epoch, error))?;
-			}
+			// 	debug!("🤝 Consensus | Block #{} | Epoch {} | End of Epoch | Attempting Proposer Selection", block_number, new_epoch);
+			// 	// let last_block_header = {
+			// 	// 	let block_state = BlockState::new(db_pool_conn).await?;
+			// 	// 	block_state.block_head_header(block_payload.block.block_header.cluster_address).await?
+			// 	// };
+			// 	select_and_store_validators_and_proposer(
+			// 		new_epoch,
+			// 		&block_payload.block.block_header,
+			// 		db_pool_conn
+			// 	).await.map_err(|error| anyhow!("🤝 Consensus | Block #{} | Epoch {} | Proposer Selection Failed | Error: {}", block_number, new_epoch, error))?;
+			// }
 
 			// store vote_result
 			let vote_state = VoteResultState::new(&db_pool_conn).await?;

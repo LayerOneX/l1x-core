@@ -22,6 +22,7 @@ use libp2p_gossipsub::{self as gossipsub, MessageId};
 use log::{debug, error, info, warn};
 use primitives::{Address, Epoch};
 use system::config::MpscConfig;
+use system::validator::ValidatorsBroadcast;
 use std::io;
 use std::{
     collections::{
@@ -53,7 +54,7 @@ use system::{
     dht_health_storage::DHTHealthStorage,
     node_health::{AggregatedNodeHealthBroadcast, NodeHealthBroadcast, NodeHealthPayload},
     node_info::{NodeInfo, NodeInfoBroadcast},
-    protocol::{deserialize_from_versioned_message, serialize_as_versioned_message, ProtocolError},
+    protocol::{deserialize_from_versioned_message, serialize_as_versioned_message},
     transaction::{Transaction, TransactionBroadcast},
     vote::{Vote, VoteBroadcast},
     vote_result::{VoteResult, VoteResultBroadcast},
@@ -61,6 +62,7 @@ use system::{
 };
 use tokio::sync::{mpsc, oneshot};
 use parking_lot::RwLock;
+use system::validator::ValidatorPayload;
 
 fn deserialize<'a, R: Deserialize<'a>>(encoded_data: &'a [u8]) -> Result<R, io::Error> {
     bincode::deserialize(encoded_data).map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))
@@ -306,6 +308,7 @@ pub async fn new(
     let tx_topic = get_topic_hash(p2p_topics::TRANSACTIONS_TOPIC);
     let block_validate_topic = get_topic_hash(p2p_topics::BLOCKS_VALIDATE_TOPIC);
     let block_proposer_topic = get_topic_hash(p2p_topics::BLOCK_PROPOSER_TOPIC);
+    let validators_topic = get_topic_hash(p2p_topics::VALIDATORS_TOPIC);
     let vote_topic = get_topic_hash(p2p_topics::VOTE_TOPIC);
     let vote_result_topic = get_topic_hash(p2p_topics::VOTE_RESULT_TOPIC);
     let node_health_topic = get_topic_hash(p2p_topics::NODE_HEALTH_TOPIC);
@@ -318,6 +321,7 @@ pub async fn new(
         vote_result_topic,
         block_validate_topic,
         block_proposer_topic,
+        validators_topic,
         vote_topic,
         node_health_topic,
         aggregated_node_health_topic,
@@ -785,6 +789,24 @@ impl BlockProposerBroadcast for Client {
             .unwrap_or_else(|e| {
                 error!("🚨 Network - Block Proposer Broadcasting | Failed to send BroadcastBlockProposer command down command_sender channel: {e:?}");
             });
+
+        match receiver.await {
+            Ok(res) => match res {
+                Ok(msg_id) => Ok(msg_id),
+                Err(e) => Err(e),
+            },
+            Err(e) => Err(Box::new(e)),
+        }
+    }
+}
+
+#[async_trait]
+impl ValidatorsBroadcast for Client {
+    async fn validators_broadcast(&self, validator_payload: ValidatorPayload) -> Result<MessageId, Box<dyn Error + Send>> {
+        let (sender, receiver) = oneshot::channel();
+        self.sender.send(Command::BroadcastValidators { validator_payload, sender }).await.unwrap_or_else(|e| {
+            error!("🚨 Network - Validators Broadcasting | Failed to send BroadcastValidators command down command_sender channel: {e:?}");
+        });
 
         match receiver.await {
             Ok(res) => match res {
@@ -1392,18 +1414,7 @@ impl EventLoop {
                                         });
                                 }
                                 Err(e) => {
-                                    match e {
-                                        ProtocolError::NamespaceMismatch { expected, received } => {
-                                            warn!("⚠️ Network - Gossipsub | Can't deserialize NodeInfo from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
-                                            let cmd_sender = self.command_sender.clone();
-                                            tokio::spawn(async move {
-                                                let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
-                                            });
-                                        }
-                                        _ => {
-                                            warn!("⚠️ Network - Gossipsub | Can't deserialize NodeInfo from peer {}: {}", peer_id, e)
-                                        }
-                                    }
+                                    warn!("⚠️ Network - Gossipsub | Can't deserialize NODE_INFO_TOPIC from peer {}: {}", peer_id, e)
                                 }
                             },
                             p2p_topics::TRANSACTIONS_TOPIC => {
@@ -1418,18 +1429,7 @@ impl EventLoop {
                                             });
                                     }
                                     Err(e) => {
-                                        match e {
-                                            ProtocolError::NamespaceMismatch { expected, received } => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize TRANSACTIONS_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
-                                                let cmd_sender = self.command_sender.clone();
-                                                tokio::spawn(async move {
-                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
-                                                });
-                                            }
-                                            _ => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize TRANSACTIONS_TOPIC from peer {}: {}", peer_id, e)
-                                            }
-                                        }
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize TRANSACTIONS_TOPIC from peer {}: {}", peer_id, e)
                                     }
                                 }
                             }
@@ -1468,18 +1468,7 @@ impl EventLoop {
                                             });
                                     }
                                     Err(e) => {
-                                        match e {
-                                            ProtocolError::NamespaceMismatch { expected, received } => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize BLOCKS_VALIDATE_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
-                                                let cmd_sender = self.command_sender.clone();
-                                                tokio::spawn(async move {
-                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
-                                                });
-                                            }
-                                            _ => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize BLOCKS_VALIDATE_TOPIC from peer {}: {}", peer_id, e)
-                                            }
-                                        }
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize BLOCKS_VALIDATE_TOPIC from peer {}: {}", peer_id, e)
                                     }
                                 }
                             }
@@ -1498,21 +1487,27 @@ impl EventLoop {
                                             });
                                     }
                                     Err(e) => {
-                                        match e {
-                                            ProtocolError::NamespaceMismatch { expected, received } => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize BLOCK_PROPOSER_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
-                                                let cmd_sender = self.command_sender.clone();
-                                                tokio::spawn(async move {
-                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
-                                                });
-                                            }
-                                            _ => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize BLOCK_PROPOSER_TOPIC from peer {}: {}", peer_id, e)
-                                            }
-                                        }
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize BLOCK_PROPOSER_TOPIC from peer {}: {}", peer_id, e)
+                                    }
+                                }
+                            },
+                            p2p_topics::VALIDATORS_TOPIC => {
+                                match deserialize_from_versioned_message::<ValidatorPayload>(&message.data) {
+                                    Ok(validator_payload) => {
+                                        let _ = self
+                                            .event_sender
+                                            .send(Event::InboundValidators { validator_payload })
+                                            .await
+                                            .unwrap_or_else(|e| {
+                                                error!("🚨 Network - Gossipsub | Failed to send incoming validators to receiver: {:?}", e)
+                                            });
+                                    }
+                                    Err(e) => {
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize VALIDATORS_TOPIC from peer {}: {}", peer_id, e)
                                     }
                                 }
                             }
+                                
                             p2p_topics::VOTE_TOPIC => match deserialize_from_versioned_message::<Vote>(&message.data) {
                                 Ok(vote) => {
                                     let _ =
@@ -1521,18 +1516,7 @@ impl EventLoop {
                                         });
                                 }
                                 Err(e) => {
-                                    match e {
-                                        ProtocolError::NamespaceMismatch { expected, received } => {
-                                            warn!("⚠️ Network - Gossipsub | Can't deserialize VOTE_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
-                                            let cmd_sender = self.command_sender.clone();
-                                            tokio::spawn(async move {
-                                                let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
-                                            });
-                                        }
-                                        _ => {
-                                            warn!("⚠️ Network - Gossipsub | Can't deserialize VOTE_TOPIC from peer {}: {}", peer_id, e)
-                                        }
-                                    }
+                                    warn!("⚠️ Network - Gossipsub | Can't deserialize VOTE_TOPIC from peer {}: {}", peer_id, e)
                                 }
                             },
                             p2p_topics::VOTE_RESULT_TOPIC => {
@@ -1547,18 +1531,7 @@ impl EventLoop {
                                             });
                                     }
                                     Err(e) => {
-                                        match e {
-                                            ProtocolError::NamespaceMismatch { expected, received } => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize VOTE_RESULT_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
-                                                let cmd_sender = self.command_sender.clone();
-                                                tokio::spawn(async move {
-                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
-                                                });
-                                            }
-                                            _ => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize VOTE_RESULT_TOPIC from peer {}: {}", peer_id, e)
-                                            }
-                                        }
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize VOTE_RESULT_TOPIC from peer {}: {}", peer_id, e)
                                     }
                                 }
                             }
@@ -1574,18 +1547,7 @@ impl EventLoop {
                                             });
                                     }
                                     Err(e) => {
-                                        match e {
-                                            ProtocolError::NamespaceMismatch { expected, received } => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize NODE_HEALTH_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
-                                                let cmd_sender = self.command_sender.clone();
-                                                tokio::spawn(async move {
-                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
-                                                });
-                                            }
-                                            _ => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize NODE_HEALTH_TOPIC from peer {}: {}", peer_id, e)
-                                            }
-                                        }
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize NODE_HEALTH_TOPIC from peer {}: {}", peer_id, e)
                                     }
                                 }
                             }
@@ -1604,18 +1566,7 @@ impl EventLoop {
                                             });
                                     }
                                     Err(e) => {
-                                        match e {
-                                            ProtocolError::NamespaceMismatch { expected, received } => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize AGGREGATED_NODE_HEALTH_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
-                                                let cmd_sender = self.command_sender.clone();
-                                                tokio::spawn(async move {
-                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
-                                                });
-                                            }
-                                            _ => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize AGGREGATED_NODE_HEALTH_TOPIC from peer {}: {}", peer_id, e)
-                                            }
-                                        }
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize AGGREGATED_NODE_HEALTH_TOPIC from peer {}: {}", peer_id, e)
                                     }
                                 }
                             }
@@ -1633,18 +1584,7 @@ impl EventLoop {
                                             });
                                     }
 									Err(e) => {
-                                        match e {
-                                            ProtocolError::NamespaceMismatch { expected, received } => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize BROADCAST_NODE_DETAILED_STATUS_TOPIC from peer {}: Namespace mismatch. Expected: {}, Received: {}", peer_id, expected, received);
-                                                let cmd_sender = self.command_sender.clone();
-                                                tokio::spawn(async move {
-                                                    let _ = cmd_sender.send(Command::DisconnectPeer { peer_id, reason: format!("Namespace mismatch. Expected: {}, Received: {}", expected, received) }).await.unwrap_or_else(|e| error!("🚨 Network - Gossipsub | Failed to send DisconnectPeer event: {:?}", e));
-                                                });
-                                            }
-                                            _ => {
-                                                warn!("⚠️ Network - Gossipsub | Can't deserialize BROADCAST_NODE_DETAILED_STATUS_TOPIC from peer {}: {}", peer_id, e)
-                                            }
-                                        }
+                                        warn!("⚠️ Network - Gossipsub | Can't deserialize BROADCAST_NODE_DETAILED_STATUS_TOPIC from peer {}: {}", peer_id, e)
                                     }
 								}
                             }
@@ -1938,6 +1878,29 @@ impl EventLoop {
                 }
                 Err(e) => {
                     error!("🚨 Network - Gossipsub | Failed to serialize Block Proposer to bytes");
+                    let _ = sender.send(Err(Box::new(e)));
+                }
+            },
+            Command::BroadcastValidators { validator_payload, sender } => match serialize_as_versioned_message(validator_payload) {
+                Ok(validator_payload_bytes) => {
+                    match self
+                        .swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .publish(gossipsub::IdentTopic::new(p2p_topics::VALIDATORS_TOPIC), validator_payload_bytes)
+                    {
+                        Ok(msg_id) => {
+                            info!("🏥 Network - Gossipsub | Broadcasting Validators");
+                            let _ = sender.send(Ok(msg_id));
+                        }
+                        Err(e) => {
+                            // error!("🚨 Network - Gossipsub | Publish Validators failed, error: {}", e);
+                            let _ = sender.send(Err(Box::new(e)));
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("🚨 Network - Gossipsub | Failed to serialize Validators to bytes, error: {}", e);
                     let _ = sender.send(Err(Box::new(e)));
                 }
             },
@@ -2384,6 +2347,11 @@ pub enum Command {
         block_proposer_payload: BlockProposerPayload,
         sender: oneshot::Sender<Result<MessageId, Box<dyn Error + Send>>>,
     },
+    /// Broadcast a validator_payload to the network
+    BroadcastValidators {
+        validator_payload: ValidatorPayload,
+        sender: oneshot::Sender<Result<MessageId, Box<dyn Error + Send>>>,
+    },
     /// Broadcast a vote_payload to the network
     BroadcastVote {
         vote: Vote,
@@ -2465,6 +2433,9 @@ pub enum Event {
     },
     InboundBlockProposer {
         block_proposer_payload: BlockProposerPayload,
+    },
+    InboundValidators {
+        validator_payload: ValidatorPayload,
     },
     InboundVote {
         vote: Vote,

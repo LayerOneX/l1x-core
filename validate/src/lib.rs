@@ -10,3 +10,4 @@ pub mod validate_staking;
 pub mod validate_token;
 pub mod validate_vote;
 pub mod validate_vote_result;
+pub mod validate_validator;

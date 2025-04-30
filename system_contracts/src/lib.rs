@@ -121,8 +121,8 @@ pub mod default_genesis_attributes {
     use primitives::Address;
 
     // TODO : GENERATE PROPER Address
-    pub const DEFAULT_STAKING_POOL_ADDRESS: Address = hex!("522b3294fe78d57a1d7e1c37393f11841f6a9494");
-    pub const DEFAULT_BLOCK_PROPOSER_ADDRESS: Address = hex!("78e044394595d4984f66c1b19059bc14ecc24063");
+    pub const DEFAULT_STAKING_POOL_ADDRESS: Address = hex!("b810846b3b860992e8d06ba5ef2c51779c42fba9");
+    pub const DEFAULT_BLOCK_PROPOSER_ADDRESS: Address = hex!("bdba6171ff1f7fe74c20acd40c55ba26cdf4310a");
 
     pub const DEFAULT_VALIDATOR_1_ADDRESS: Address = hex!("bdba6171ff1f7fe74c20acd40c55ba26cdf4310a");
     pub const DEFAULT_VALIDATOR_2_ADDRESS: Address = hex!("451535eb42068d42f41873413e6f7ae7dc56c6af");

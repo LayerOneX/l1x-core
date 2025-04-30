@@ -82,14 +82,14 @@ pub mod config {
 	use hex_literal::hex;
 	use primitives::Address;
 
-	pub const MINT_MASTER_ADDRESS: Address = hex!("78e044394595d4984f66c1b19059bc14ecc24063");
-	pub const FEE_RECIPIENT_MASTER_ADDRESS: Address = hex!("7b7ab20f75b691e90c546e89e41aa23b0a821444");
+	pub const MINT_MASTER_ADDRESS: Address = hex!("bdba6171ff1f7fe74c20acd40c55ba26cdf4310a");
+	pub const FEE_RECIPIENT_MASTER_ADDRESS: Address = hex!("bdba6171ff1f7fe74c20acd40c55ba26cdf4310a");
 	pub const MULTISIG_DEFAULT_APPROVERS: [Address; 2] = [
-		hex!("78e044394595d4984f66c1b19059bc14ecc24063"),
-		hex!("7b7ab20f75b691e90c546e89e41aa23b0a821444"),
+		hex!("bdba6171ff1f7fe74c20acd40c55ba26cdf4310a"),
+		hex!("451535eb42068d42f41873413e6f7ae7dc56c6af"),
 	];
 
-	pub const SLOTS_PER_EPOCH: u128 = 30;
+	pub const SLOTS_PER_EPOCH: u128 = crate::mainnet_config::MAINNET_SLOTS_PER_EPOCH;
 }
 
 #[cfg(all(feature = "testnet", feature = "mainnet"))]
@@ -129,6 +129,7 @@ pub mod p2p_topics {
 	pub const NODE_HEALTH_TOPIC: &str = "mainnet-d310d666d3c35201044b1:node_health";
 	pub const AGGREGATED_NODE_HEALTH_TOPIC: &str = "mainnet-d310d666d3c35201044b1:aggregate_node_health";
 	pub const BROADCAST_NODE_DETAILED_STATUS_TOPIC: &str = "mainnet-d310d666d3c35201044b1:broadcast_node_detailed_status";
+	pub const VALIDATORS_TOPIC: &str = "mainnet-d310d666d3c35201044b1:validators";
 }
 
 #[cfg(feature = "testnet")]
@@ -142,6 +143,7 @@ pub mod p2p_topics {
 	pub const NODE_HEALTH_TOPIC: &str = "testnet-80a11efa9d8c5b3a94934:node_health";
 	pub const AGGREGATED_NODE_HEALTH_TOPIC: &str = "testnet-80a11efa9d8c5b3a94934:aggregate_node_health";
 	pub const BROADCAST_NODE_DETAILED_STATUS_TOPIC: &str = "testnet-80a11efa9d8c5b3a94934:broadcast_node_detailed_status";
+	pub const VALIDATORS_TOPIC: &str = "testnet-80a11efa9d8c5b3a94934:validators";
 }
 
 #[cfg(feature = "devnet")]
@@ -155,4 +157,5 @@ pub mod p2p_topics {
 	pub const NODE_HEALTH_TOPIC: &str = "devnet-f95f8a887cf1521302693:node_health";
 	pub const AGGREGATED_NODE_HEALTH_TOPIC: &str = "devnet-f95f8a887cf1521302693:aggregate_node_health";
 	pub const BROADCAST_NODE_DETAILED_STATUS_TOPIC: &str = "devnet-f95f8a887cf1521302693:broadcast_node_detailed_status";
+	pub const VALIDATORS_TOPIC: &str = "devnet-f95f8a887cf1521302693:validators";
 }

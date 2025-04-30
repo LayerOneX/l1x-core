@@ -42,7 +42,7 @@ util = { package = 'util', path = '../util', default-features = false }
 l1x_htm = { package = 'l1x_htm', path = '../l1x_htm' }
 compile_time_config = { package = 'compile_time_config', path = '../compile_time_config' }
 runtime_config = { package = 'runtime_config', path = '../runtime_config' }
-
+validator = { package = 'validator', path = '../validator', default-features = false }
 
 [lints]
 workspace = true
